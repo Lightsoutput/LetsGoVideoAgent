@@ -1,0 +1,121 @@
+version: "3"
+
+silent: false
+
+vars:
+  COMPOSE_ENV_FILE: '{{default ".env.example" .COMPOSE_ENV_FILE}}'
+
+tasks:
+  default:
+    desc: 显示可用工程命令
+    cmds:
+      - task --list
+
+  bootstrap:
+    desc: 安装后端全部可选依赖与前端锁定依赖
+    cmds:
+      - uv sync --project backend --all-extras
+      - pnpm install --frozen-lockfile
+
+  dev:api:
+    desc: 使用内存适配器启动 FastAPI
+    dir: backend
+    env:
+      APP_ENV: development
+      REPOSITORY_BACKEND: memory
+      WORKFLOW_BACKEND: inline
+    cmds:
+      - uv run uvicorn lets_go_video_agent.main:app --reload --host 0.0.0.0 --port 8000
+
+  dev:web:
+    desc: 启动 Next.js 开发服务器
+    cmds:
+      - pnpm --dir frontend dev
+
+  dev:
+    desc: 并行启动内存模式 API 与前端
+    cmds:
+      - task --parallel dev:api dev:web
+
+  backend:format:
+    desc: 格式化 Python
+    dir: backend
+    cmds:
+      - uv run ruff format src tests migrations
+
+  backend:lint:
+    desc: 检查 Python 代码规范
+    dir: backend
+    cmds:
+      - uv run ruff format --check src tests migrations
+      - uv run ruff check src tests migrations
+
+  backend:typecheck:
+    desc: 执行 Python 严格类型检查
+    dir: backend
+    cmds:
+      - uv run mypy src
+
+  backend:test:
+    desc: 执行后端测试
+    dir: backend
+    cmds:
+      - uv run pytest --cov=lets_go_video_agent --cov-report=term-missing
+
+  frontend:lint:
+    desc: 检查前端代码规范和类型
+    cmds:
+      - pnpm --dir frontend lint
+      - pnpm --dir frontend typecheck
+
+  frontend:test:
+    desc: 执行前端单元测试
+    cmds:
+      - pnpm --dir frontend test
+
+  frontend:build:
+    desc: 构建前端生产产物
+    cmds:
+      - pnpm --dir frontend build
+
+  check:
+    desc: 提交前运行全部快速质量门禁
+    deps:
+      - backend:lint
+      - backend:typecheck
+      - backend:test
+      - frontend:lint
+      - frontend:test
+      - frontend:build
+
+  compose:config:
+    desc: 静态验证 Compose（默认读取 .env.example，不启动容器）
+    cmds:
+      - docker compose --env-file {{.COMPOSE_ENV_FILE}} config --quiet
+
+  docker:build:
+    desc: 构建 API/Worker 与前端镜像
+    deps: [compose:config]
+    cmds:
+      - docker compose --env-file {{.COMPOSE_ENV_FILE}} build api worker frontend
+
+  docker:up:
+    desc: 构建并启动完整 P0 技术栈
+    cmds:
+      # 若 .env 不存在，Compose 会给出明确错误；避免使用 Windows 不支持的 `test -f`。
+      - docker compose --env-file .env up --detach --build --wait
+
+  docker:down:
+    desc: 停止容器但保留数据库和对象存储卷
+    cmds:
+      - docker compose --env-file {{.COMPOSE_ENV_FILE}} down
+
+  docker:logs:
+    desc: 持续查看 API、Worker 与前端日志
+    cmds:
+      - docker compose --env-file {{.COMPOSE_ENV_FILE}} logs --follow api worker frontend
+
+  db:migrate:
+    desc: 在容器中执行 Alembic 数据库迁移
+    cmds:
+      - docker compose --env-file .env run --rm migrate

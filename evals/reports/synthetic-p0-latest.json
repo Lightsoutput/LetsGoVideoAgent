@@ -1,0 +1,115 @@
+{
+  "suite": "synthetic-p0",
+  "generated_at": "2026-08-02T14:26:30.393401Z",
+  "passed": true,
+  "passed_cases": 4,
+  "total_cases": 4,
+  "pass_rate": 1.0,
+  "total_estimated_cost_usd": "0",
+  "results": [
+    {
+      "id": "global-summary",
+      "target_kind": "global",
+      "passed": true,
+      "checks": {
+        "answered": true,
+        "has_citations": true,
+        "citation_provenance": true,
+        "target_alignment": true,
+        "trace_completed": true,
+        "public_trace_only": true,
+        "within_tool_budget": true,
+        "snapshot_evidence": true
+      },
+      "answer_status": "answered",
+      "citation_count": 5,
+      "trace_id": "bbc645db-6b3c-40cc-9908-0caf2b80e967",
+      "usage": {
+        "model_calls": 1,
+        "tool_calls": 1,
+        "input_tokens": 110,
+        "output_tokens": 500,
+        "estimated_cost_usd": "0",
+        "elapsed_ms": 16
+      }
+    },
+    {
+      "id": "chapter-range",
+      "target_kind": "range",
+      "passed": true,
+      "checks": {
+        "answered": true,
+        "has_citations": true,
+        "citation_provenance": true,
+        "target_alignment": true,
+        "trace_completed": true,
+        "public_trace_only": true,
+        "within_tool_budget": true,
+        "snapshot_evidence": true
+      },
+      "answer_status": "answered",
+      "citation_count": 4,
+      "trace_id": "ffc6de06-0c37-4d53-8360-167b0ebbf5b1",
+      "usage": {
+        "model_calls": 1,
+        "tool_calls": 1,
+        "input_tokens": 100,
+        "output_tokens": 500,
+        "estimated_cost_usd": "0",
+        "elapsed_ms": 0
+      }
+    },
+    {
+      "id": "moment-context",
+      "target_kind": "moment",
+      "passed": true,
+      "checks": {
+        "answered": true,
+        "has_citations": true,
+        "citation_provenance": true,
+        "target_alignment": true,
+        "trace_completed": true,
+        "public_trace_only": true,
+        "within_tool_budget": true,
+        "snapshot_evidence": true
+      },
+      "answer_status": "answered",
+      "citation_count": 3,
+      "trace_id": "f0d70c50-8947-4b5d-af61-9601b8038e49",
+      "usage": {
+        "model_calls": 1,
+        "tool_calls": 2,
+        "input_tokens": 100,
+        "output_tokens": 500,
+        "estimated_cost_usd": "0",
+        "elapsed_ms": 0
+      }
+    },
+    {
+      "id": "current-frame",
+      "target_kind": "frame",
+      "passed": true,
+      "checks": {
+        "answered": true,
+        "has_citations": true,
+        "citation_provenance": true,
+        "target_alignment": true,
+        "trace_completed": true,
+        "public_trace_only": true,
+        "within_tool_budget": true,
+        "snapshot_evidence": true
+      },
+      "answer_status": "answered",
+      "citation_count": 3,
+      "trace_id": "13a9fa1a-a72b-4da5-98be-714ac061cad4",
+      "usage": {
+        "model_calls": 1,
+        "tool_calls": 2,
+        "input_tokens": 100,
+        "output_tokens": 500,
+        "estimated_cost_usd": "0",
+        "elapsed_ms": 0
+      }
+    }
+  ]
+}

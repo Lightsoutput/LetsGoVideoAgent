@@ -1,0 +1,18 @@
+{
+  "name": "lets-go-video-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-first multi-agent video understanding workspace",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --dir frontend dev",
+    "build": "pnpm --dir frontend build",
+    "lint": "pnpm --dir frontend lint",
+    "typecheck": "pnpm --dir frontend typecheck",
+    "test:web": "pnpm --dir frontend test",
+    "test:e2e": "pnpm --dir frontend test:e2e"
+  }
+}

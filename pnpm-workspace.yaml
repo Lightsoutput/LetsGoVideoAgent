@@ -1,0 +1,7 @@
+packages:
+  - frontend
+
+# pnpm 11 默认阻止依赖执行安装脚本。只放行前端构建明确需要的两个包。
+allowBuilds:
+  esbuild: true
+  sharp: true

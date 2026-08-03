@@ -1,0 +1,201 @@
+dataset:
+  id: bilibili_arknights_public_v1
+  version: "1.0"
+  language: zh-CN
+  purpose: manual_integration_eval
+  annotation_status: pending_human_review
+
+source_policy:
+  default_fetch_mode: metadata_only
+  auto_download_in_ci: false
+  commit_media_files: false
+  commit_generated_screenshots: false
+  require_rights_acknowledgement_before_download: true
+  allowed_content:
+    - user_owned
+    - creator_authorized
+    - legally_permitted_for_private_testing
+  forbidden_behavior:
+    - bypass_login_or_drm
+    - redistribute_source_video
+    - publish_unreviewed_frames_with_bystander_faces
+
+cases:
+  - id: ak_guide_reclamation_skip
+    category: guide
+    tier: smoke
+    source:
+      platform: bilibili
+      bvid: BV1V4421f7jr
+      url: https://www.bilibili.com/video/BV1V4421f7jr/
+      title: "【明日方舟】生息演算终极逃课攻略！再也不用被折磨了！"
+      creator: 低配挂机研讨会
+      published_at: "2024-08-18T10:10:00+08:00"
+      duration_seconds: 218
+    rights:
+      page_notice: "未经作者授权，禁止转载"
+      usage: private_manual_eval_only
+    content_features:
+      - 游戏录屏
+      - 旁白讲解
+      - 高密度游戏 UI
+      - 快速操作步骤
+    questions:
+      - id: timeline
+        kind: timeline
+        prompt: "请按准备、执行和收尾自动分段，并给出每段起止时间与摘要。"
+        required_evidence: [timestamp_range, transcript_quote]
+      - id: current_frame
+        kind: frame
+        prompt: "当前帧的技术脉络或商店界面中，高亮的是哪一项？"
+        required_evidence: [screenshot, ocr_region, visual_description]
+
+  - id: ak_guide_reclamation_first_three_days
+    category: guide
+    tier: stress
+    source:
+      platform: bilibili
+      bvid: BV1nx4y1E7qx
+      url: https://www.bilibili.com/video/BV1nx4y1E7qx/?p=3
+      title: "【明日方舟】“生息演算”入门攻略！开局技巧+关卡详解！"
+      creator: 魔法Zc目录
+      published_at: "2023-01-30T12:25:07+08:00"
+      duration_seconds: 298
+      selected_part: 3
+      selected_part_title: "开篇·开局前3天做什么"
+    rights:
+      page_notice: "未经作者授权，禁止转载"
+      usage: private_manual_eval_only
+    content_features:
+      - 多 P 合集
+      - 游戏 UI 与资源图标
+      - 直播录像和编辑讲解混合
+    questions:
+      - id: source_vs_agent_segments
+        kind: structure
+        prompt: "区分原视频分P目录与 Agent 自动分段，不要把两者混为一谈。"
+        required_evidence: [source_chapters, inferred_segments]
+      - id: first_three_days
+        kind: timeline
+        prompt: "开局前三天分别应该做什么？按顺序列出步骤并附时间戳。"
+        required_evidence: [timestamp_range, transcript_quote, screenshot]
+
+  - id: ak_tutorial_beginner_six_questions
+    category: tutorial
+    tier: smoke
+    source:
+      platform: bilibili
+      bvid: BV1g441147Lc
+      url: https://www.bilibili.com/video/BV1g441147Lc/
+      title: "【明日方舟】6分钟解决新手入坑6大难题！如何抽卡？怎样配队？"
+      creator: 二色彩虹
+      published_at: "2019-05-03T17:50:45+08:00"
+      duration_seconds: null
+      duration_hint: "约 6 分钟，运行时以元数据为准"
+    rights:
+      page_notice: "未经作者授权，禁止转载"
+      usage: private_manual_eval_only
+    content_features:
+      - 高密度口播
+      - 新手术语
+      - 配队与抽卡界面
+      - 公开招募 UI
+    questions:
+      - id: six_topics
+        kind: global
+        prompt: "视频回答了哪六类新手问题？按出现顺序列出并附时间范围。"
+        required_evidence: [timestamp_range, transcript_quote]
+      - id: recruitment_frame
+        kind: moment
+        prompt: "公开招募是在什么时候讲到的？截取界面并读取标签或按钮。"
+        required_evidence: [timestamp, screenshot, ocr_region]
+
+  - id: ak_tutorial_system_and_progression
+    category: tutorial
+    tier: standard
+    source:
+      platform: bilibili
+      bvid: BV1J18JzEExf
+      url: https://www.bilibili.com/video/BV1J18JzEExf/
+      title: "1.明日方舟史上最详细入坑教学——游戏杂谈+养成系统介绍"
+      creator: 纯凉今天鸽了吗
+      published_at: "2025-07-29T11:50:00+08:00"
+      duration_seconds: 949
+    rights:
+      page_notice: "未经作者授权，禁止转载"
+      usage: private_manual_eval_only
+    content_features:
+      - PPT 总结页
+      - 游戏录屏
+      - 字幕额外标注
+      - 观点与客观说明混合
+    questions:
+      - id: slide
+        kind: frame
+        prompt: "当前 PPT 页的标题和要点是什么？按画面排版顺序读取。"
+        required_evidence: [screenshot, ocr_region, visual_description]
+      - id: fact_opinion
+        kind: reasoning
+        prompt: "哪些是作者个人经验，哪些是对游戏系统的客观说明？"
+        required_evidence: [timestamp_range, transcript_quote]
+
+  - id: ak_vlog_ambience_synesthesia_2023
+    category: vlog
+    tier: smoke
+    source:
+      platform: bilibili
+      bvid: BV19s4y1g77S
+      url: https://www.bilibili.com/video/BV19s4y1g77S
+      title: "【vlog】又去了明日方舟音律联觉"
+      creator: 山栗棕染剂
+      published_at: "2023-05-03T00:53:00+08:00"
+      duration_seconds: 389
+    rights:
+      page_notice: "未经作者授权，禁止转载"
+      usage: private_manual_eval_only
+      privacy_note: "包含现场观众和可能的人脸，导出截图前需要人工检查"
+    content_features:
+      - 手持移动镜头
+      - 环境噪声
+      - 个人旁白
+      - 人群与现场演出
+    questions:
+      - id: vlog_stages
+        kind: timeline
+        prompt: "按出发、接驳、入场、演出和散场感想自动分段；缺失阶段不要臆造。"
+        required_evidence: [timestamp_range, transcript_quote, screenshot]
+      - id: mixed_audio
+        kind: audio
+        prompt: "区分 UP 主旁白、现场广播、人群和演唱，并按片段说明。"
+        required_evidence: [timestamp_range, speaker_label, transcript_quote]
+
+  - id: ak_vlog_carnival_first_person_2024
+    category: vlog
+    tier: stress
+    source:
+      platform: bilibili
+      bvid: BV1EM4m1Z7wT
+      url: https://www.bilibili.com/video/BV1EM4m1Z7wT/
+      title: "【明日方舟嘉年华2024】第一视角纯享版体验嘉年华vlog"
+      creator: 陈渺_
+      published_at: "2024-05-04T01:25:06+08:00"
+      duration_seconds: null
+    rights:
+      page_notice: null
+      usage: metadata_only_until_rights_verified
+      privacy_note: "第一视角现场视频可能包含大量观众、Coser 和现场对话"
+    content_features:
+      - 第一视角手持拍摄
+      - 展区与场馆标牌
+      - 人群遮挡
+      - 复杂光照与多人环境声
+    questions:
+      - id: zones
+        kind: timeline
+        prompt: "识别主要展区或活动阶段，并为每段选择一张代表截图。"
+        required_evidence: [timestamp_range, screenshot, visual_description]
+      - id: privacy
+        kind: frame
+        prompt: "候选截图是否含清晰路人面部？如有则标记导出前需要模糊处理。"
+        required_evidence: [screenshot, privacy_flags]
+

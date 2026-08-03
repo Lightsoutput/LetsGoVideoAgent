@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from lets_go_video_agent.agents.harness.engine import AgentHarness
+from lets_go_video_agent.agents.roles.evidence_verifier import EvidenceVerifier
+from lets_go_video_agent.agents.roles.qa_investigator import QAInvestigator
+from lets_go_video_agent.agents.tools.video_tools import build_video_tool_registry
+from lets_go_video_agent.application.ports import AppStore
+from lets_go_video_agent.application.services import (
+    QuestionService,
+    VideoService,
+    create_budget,
+)
+from lets_go_video_agent.config import Settings
+from lets_go_video_agent.fixtures import seed_demo
+from lets_go_video_agent.infrastructure.memory import (
+    InMemoryFrameInspector,
+    InMemoryRetrieval,
+    InMemoryStore,
+)
+from lets_go_video_agent.infrastructure.models.deepseek_client import (
+    CostLedger,
+    DeepSeekClient,
+    DeepSeekPrices,
+)
+from lets_go_video_agent.media.local_pipeline import LocalProcessingManager
+from lets_go_video_agent.media.local_storage import LocalUploadStore
+from lets_go_video_agent.media.url_policy import SourceUrlPolicy
+from lets_go_video_agent.media.ytdlp import YtDlpAdapter
+
+
+@dataclass(slots=True)
+class Container:
+    """依赖装配容器。
+
+    `if memory/mysql` 之类的环境判断只应存在于这个装配边界。用例、Agent 与路由里
+    不允许根据运行环境偷偷切换实现。
+    """
+
+    settings: Settings
+    store: AppStore
+    videos: VideoService
+    questions: QuestionService
+    processing: LocalProcessingManager
+    cost_ledger: CostLedger
+
+    async def startup(self) -> None:
+        await self.store.ping()
+        if self.settings.seed_demo_data:
+            await seed_demo(self.store)
+
+    async def shutdown(self) -> None:
+        await self.store.close()
+
+
+def build_container(settings: Settings) -> Container:
+    store: AppStore
+    if settings.repository_backend == "memory":
+        store = InMemoryStore()
+    elif settings.repository_backend == "mysql":
+        # 延迟导入可选依赖，使不安装 SQLAlchemy 的纯内存测试仍然可以运行。
+        from lets_go_video_agent.infrastructure.persistence.mysql.repository import (
+            MySqlStore,
+        )
+
+        store = MySqlStore(settings.database_url)
+    else:
+        raise RuntimeError(f"未知仓库后端: {settings.repository_backend}")
+    retrieval = InMemoryRetrieval(store)
+    frame_inspector = InMemoryFrameInspector(retrieval)
+    tool_registry = build_video_tool_registry(retrieval, frame_inspector)
+    harness = AgentHarness(tool_registry)
+    verifier = EvidenceVerifier()
+    cost_ledger = CostLedger(settings.local_data_dir / "costs" / "model-usage.jsonl")
+    llm = None
+    if settings.llm_provider == "deepseek" and settings.llm_api_key:
+        llm = DeepSeekClient(
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+            api_base=settings.llm_api_base or "https://api.deepseek.com",
+            ledger=cost_ledger,
+            prices=DeepSeekPrices(
+                cache_hit_input=Decimal(str(settings.deepseek_cache_hit_price_cny_per_million)),
+                cache_miss_input=Decimal(str(settings.deepseek_cache_miss_price_cny_per_million)),
+                output=Decimal(str(settings.deepseek_output_price_cny_per_million)),
+            ),
+        )
+    investigator = QAInvestigator(llm=llm)
+
+    video_service = VideoService(
+        videos=store,
+        timeline=store,
+        upload_store=LocalUploadStore(
+            root=settings.local_data_dir,
+            max_bytes=settings.max_upload_bytes,
+        ),
+        url_policy=SourceUrlPolicy(),
+    )
+    question_service = QuestionService(
+        videos=store,
+        answers=store,
+        runs=store,
+        harness=harness,
+        investigator=investigator,
+        verifier=verifier,
+        default_budget=create_budget(
+            max_model_calls=settings.agent_max_model_calls,
+            max_tool_calls=settings.agent_max_tool_calls,
+            max_tokens=settings.agent_max_tokens,
+            max_cost_usd=settings.agent_max_cost_usd,
+            deadline_seconds=settings.agent_deadline_seconds,
+        ),
+    )
+    processing = LocalProcessingManager(
+        store=store,
+        data_dir=settings.local_data_dir,
+        asr_model=settings.local_asr_model,
+        llm=llm,
+        web_downloader=YtDlpAdapter(
+            download_root=settings.local_data_dir / "web-imports",
+            remote_enabled=settings.enable_remote_downloads,
+            max_download_bytes=settings.max_upload_bytes,
+            cookies_from_browser=settings.ytdlp_cookies_from_browser,
+        ),
+    )
+    return Container(
+        settings=settings,
+        store=store,
+        videos=video_service,
+        questions=question_service,
+        processing=processing,
+        cost_ledger=cost_ledger,
+    )

@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lets-go-video-agent"
+version = "0.1.0"
+description = "Evidence-first multi-agent backend for general video understanding"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "LetsGoVideoAgent contributors" }]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "orjson>=3.10,<4",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.9,<3",
+  "python-multipart>=0.0.20,<1",
+  "structlog>=25.1,<26",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+agents = [
+  "langgraph>=1.0,<2",
+  "litellm>=1.75,<2",
+  "tenacity>=9.1,<10",
+]
+infra = [
+  "aiomysql[rsa]>=0.2,<1",
+  "alembic>=1.16,<2",
+  "boto3>=1.40,<2",
+  "qdrant-client>=1.15,<2",
+  "redis>=6.2,<8",
+  "sqlalchemy[asyncio]>=2.0.41,<3",
+  "temporalio>=1.16,<2",
+]
+media = [
+  "yt-dlp>=2025.7.21",
+  "imageio-ffmpeg>=0.6.0",
+]
+local-video = [
+  # PyAV 的 Windows wheel 自带 FFmpeg 库，不要求开发机额外安装 ffmpeg.exe。
+  "av>=14,<17",
+  # 本地语音识别：P0 默认 CPU int8，避免把转写成本转嫁到云端 API。
+  "faster-whisper>=1.1,<2",
+  # 中英文画面文字识别；P0 使用 ONNX Runtime CPU，便于跨机器复现。
+  "rapidocr>=3.4,<4",
+  "onnxruntime>=1.22,<2",
+  # Whisper 偶尔输出繁体中文，统一转为简体后再进入时间轴、检索和问答。
+  "opencc-python-reimplemented>=0.1.7,<1",
+]
+observability = [
+  "langfuse>=3.2,<4",
+  "opentelemetry-api>=1.36,<2",
+  "opentelemetry-exporter-otlp>=1.36,<2",
+  "opentelemetry-instrumentation-fastapi>=0.57b0,<1",
+  "opentelemetry-sdk>=1.36,<2",
+]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+video-agent-api = "lets_go_video_agent.main:run"
+video-agent-worker = "lets_go_video_agent.workflows.worker:run"
+video-agent-eval = "lets_go_video_agent.evaluation.cli:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --disable-warnings"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["lets_go_video_agent"]
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "litellm.*"]
+ignore_missing_imports = true
