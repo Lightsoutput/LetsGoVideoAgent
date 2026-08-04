@@ -25,9 +25,8 @@ cd backend
 .\.venv\Scripts\python.exe -m uvicorn lets_go_video_agent.main:app --reload
 
 # 前端（新终端）
-cd frontend
-pnpm install
-pnpm dev
+cd /d G:\2026Summer\LetsGoVideoAgent
+npm --prefix frontend run dev
 ```
 
 打开 `http://localhost:3000`，API 文档位于 `http://localhost:8000/docs`。
