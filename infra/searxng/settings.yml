@@ -1,0 +1,15 @@
+use_default_settings: true
+
+server:
+  # 仅绑定到 compose 暴露的 127.0.0.1:8888，不对公网开放。
+  secret_key: "lets-go-video-agent-local-search"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "zh-CN"
+  formats:
+    - html
+    - json

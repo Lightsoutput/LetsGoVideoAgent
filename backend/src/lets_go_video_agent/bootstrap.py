@@ -25,6 +25,12 @@ from lets_go_video_agent.infrastructure.models.deepseek_client import (
     DeepSeekClient,
     DeepSeekPrices,
 )
+from lets_go_video_agent.infrastructure.models.ollama_vision_client import OllamaVisionClient
+from lets_go_video_agent.infrastructure.models.siliconflow_vision_client import (
+    SiliconFlowVisionClient,
+)
+from lets_go_video_agent.infrastructure.search.mcp_search_client import McpSearchClient
+from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClient
 from lets_go_video_agent.media.local_pipeline import LocalProcessingManager
 from lets_go_video_agent.media.local_storage import LocalUploadStore
 from lets_go_video_agent.media.url_policy import SourceUrlPolicy
@@ -69,9 +75,6 @@ def build_container(settings: Settings) -> Container:
     else:
         raise RuntimeError(f"未知仓库后端: {settings.repository_backend}")
     retrieval = InMemoryRetrieval(store)
-    frame_inspector = InMemoryFrameInspector(retrieval)
-    tool_registry = build_video_tool_registry(retrieval, frame_inspector)
-    harness = AgentHarness(tool_registry)
     verifier = EvidenceVerifier()
     cost_ledger = CostLedger(settings.local_data_dir / "costs" / "model-usage.jsonl")
     llm = None
@@ -86,8 +89,37 @@ def build_container(settings: Settings) -> Container:
                 cache_miss_input=Decimal(str(settings.deepseek_cache_miss_price_cny_per_million)),
                 output=Decimal(str(settings.deepseek_output_price_cny_per_million)),
             ),
+            proxy_url=settings.outbound_http_proxy,
         )
     investigator = QAInvestigator(llm=llm)
+    vlm: OllamaVisionClient | SiliconFlowVisionClient | None = None
+    if settings.vlm_provider == "ollama":
+        vlm = OllamaVisionClient(
+            model=settings.vlm_model,
+            api_base=settings.vlm_api_base,
+        )
+    elif settings.vlm_provider == "siliconflow" and settings.vlm_api_key:
+        vlm = SiliconFlowVisionClient(
+            api_key=settings.vlm_api_key,
+            model=settings.vlm_model,
+            api_base=settings.vlm_api_base,
+            ledger=cost_ledger,
+            proxy_url=settings.outbound_http_proxy,
+        )
+    frame_inspector = InMemoryFrameInspector(
+        retrieval,
+        store=store,
+        data_dir=settings.local_data_dir,
+        vlm=vlm,
+    )
+    tool_registry = build_video_tool_registry(retrieval, frame_inspector)
+    harness = AgentHarness(tool_registry)
+
+    web_search: McpSearchClient | SearxngClient | None = None
+    if settings.search_provider == "mcp":
+        web_search = McpSearchClient(url=settings.search_mcp_url)
+    elif settings.search_provider == "searxng":
+        web_search = SearxngClient(api_base=settings.search_api_base)
 
     video_service = VideoService(
         videos=store,
@@ -118,6 +150,8 @@ def build_container(settings: Settings) -> Container:
         data_dir=settings.local_data_dir,
         asr_model=settings.local_asr_model,
         llm=llm,
+        vlm=vlm,
+        web_search=web_search,
         web_downloader=YtDlpAdapter(
             download_root=settings.local_data_dir / "web-imports",
             remote_enabled=settings.enable_remote_downloads,

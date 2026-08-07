@@ -28,7 +28,8 @@ test-results/
 
 # 本地媒体与模型产物（禁止提交第三方视频）
 data/
-models/
+/models/
+/ollama_models/
 artifacts/
 downloads/
 .local-data/
@@ -51,3 +52,4 @@ dist/
 build/
 site/
 *.log
+/var/

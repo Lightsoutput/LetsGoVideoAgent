@@ -17,7 +17,19 @@ from lets_go_video_agent.domain.processing import ProcessingRun, ProcessingStatu
 from lets_go_video_agent.domain.timeline import ObservationType, TimelineArtifact, TimelineKind
 from lets_go_video_agent.domain.video import VideoStatus, WebSource
 from lets_go_video_agent.infrastructure.models.deepseek_client import DeepSeekClient
+from lets_go_video_agent.infrastructure.models.ollama_vision_client import (
+    OllamaVisionClient,
+    select_visual_frames,
+)
+from lets_go_video_agent.infrastructure.models.siliconflow_vision_client import (
+    SiliconFlowVisionClient,
+)
+from lets_go_video_agent.infrastructure.search.mcp_search_client import McpSearchClient
+from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClient
 from lets_go_video_agent.media.ytdlp import YtDlpAdapter
+
+# 修改分析策略后递增，避免旧字幕、视觉理解和分段结果继续污染新任务。
+ANALYSIS_CACHE_VERSION = "semantic-v3"
 
 
 @lru_cache(maxsize=1)
@@ -119,6 +131,40 @@ def transcribe(path: Path, model_name: str) -> list[dict[str, Any]]:
         for item in segments
         if item.text.strip()
     ]
+
+
+def load_sidecar_subtitles(media_path: Path) -> list[dict[str, Any]]:
+    """读取 yt-dlp 下载的 VTT/SRT 字幕；存在可靠字幕轨时优先于 ASR。"""
+    candidates = [
+        *media_path.parent.glob(f"{media_path.stem}*.vtt"),
+        *media_path.parent.glob(f"{media_path.stem}*.srt"),
+    ]
+    if not candidates:
+        return []
+    content = candidates[0].read_text(encoding="utf-8-sig", errors="replace")
+    pattern = re.compile(
+        r"(?P<start>\d{1,2}:\d{2}:\d{2}[.,]\d{3})\s+-->\s+"
+        r"(?P<end>\d{1,2}:\d{2}:\d{2}[.,]\d{3})[^\n]*\n(?P<text>.*?)(?=\n\s*\n|\Z)",
+        re.S,
+    )
+
+    def to_ms(raw: str) -> int:
+        hours, minutes, seconds = raw.replace(",", ".").split(":")
+        return round((int(hours) * 3600 + int(minutes) * 60 + float(seconds)) * 1000)
+
+    result: list[dict[str, Any]] = []
+    for match in pattern.finditer(content):
+        text = re.sub(r"<[^>]+>|\{\\[^}]+\}", "", match.group("text"))
+        text = normalize_chinese_text(" ".join(text.splitlines()))
+        if text:
+            result.append(
+                {
+                    "start_ms": to_ms(match.group("start")),
+                    "end_ms": to_ms(match.group("end")),
+                    "text": text,
+                }
+            )
+    return result
 
 
 def diarize_speakers(
@@ -416,7 +462,12 @@ def _extract_ocr_speaker_anchors(
 
 
 def _select_speaker_clusters(matrix: Any, max_speakers: int) -> Any:
-    """用确定性 k-means 和相对惯性收益估计 1～4 个说话人。"""
+    """保守估计说话人数：只有声学分离非常明显时才从单人升级为多人。
+
+    P0 的轻量频谱特征容易把同一人的情绪、音量和背景音乐误判为不同人，因此第一
+    次拆分采用明显高于后续拆分的门槛。实名自我介绍/OCR 锚点走上层有监督路径，
+    不受这里的保守门控影响。
+    """
     import numpy as np
 
     count = len(matrix)
@@ -457,7 +508,24 @@ def _select_speaker_clusters(matrix: Any, max_speakers: int) -> Any:
         improvement = (previous_inertia - inertia) / max(previous_inertia, 1e-9)
         # 访谈中同性说话人的音色距离小于男女声差异，阈值过高会只得到“男女二分”。
         # 仍要求每个簇覆盖至少2%的字幕，防止把偶发噪声误认为独立说话人。
-        if improvement < 0.08 or sizes.min() < max(4, count * 0.02):
+        minimum_improvement = 0.24 if cluster_count == 2 else 0.12
+        minimum_cluster_size = (
+            max(8, int(count * 0.08)) if cluster_count == 2 else max(5, int(count * 0.04))
+        )
+        transition_strength = float("inf")
+        if cluster_count == 2 and count > 2:
+            adjacent_distances = np.sqrt(np.square(np.diff(matrix, axis=0)).sum(axis=1))
+            transition_rows = np.flatnonzero(labels[1:] != labels[:-1])
+            if len(transition_rows):
+                ordinary_change = max(float(np.median(adjacent_distances)), 1e-6)
+                transition_strength = (
+                    float(np.median(adjacent_distances[transition_rows])) / ordinary_change
+                )
+        if (
+            improvement < minimum_improvement
+            or sizes.min() < minimum_cluster_size
+            or transition_strength < 1.8
+        ):
             break
         best_labels, previous_inertia = labels, inertia
     return best_labels
@@ -549,7 +617,10 @@ def curate_representative_frames(
     ocr_by_timestamp = {int(item["timestamp_ms"]): str(item["text"]) for item in ocr_items}
     used_timestamps: set[int] = set()
     result: list[TimelineArtifact] = []
+    max_total_frames = min(24, max(8, len(sections) * 2))
     for section_index, section in enumerate(sections, start=1):
+        if len(result) >= max_total_frames:
+            break
         section_frames = [
             item
             for item in frames
@@ -561,7 +632,7 @@ def curate_representative_frames(
 
         duration = section.time_range.end_ms - section.time_range.start_ms
         # 短视频章节通常只有 20～60 秒，也应覆盖前半段和后半段，不能总取章节尾部。
-        fractions = (0.28, 0.72) if duration >= 20_000 else (0.5,)
+        fractions = (0.30, 0.70) if duration >= 90_000 else (0.5,)
         selected: list[dict[str, Any]] = []
         for fraction in fractions:
             target = section.time_range.start_ms + int(duration * fraction)
@@ -742,6 +813,7 @@ def build_semantic_windows(
     ocr_items: list[dict[str, Any]],
     duration_ms: int,
     window_ms: int = 60_000,
+    visual_items: list[dict[str, Any]] | None = None,
 ) -> str:
     """把长视频压缩为完整覆盖的语义窗口，避免直接截断逐句字幕而丢失后半片。"""
     lines: list[str] = []
@@ -757,9 +829,16 @@ def build_semantic_windows(
             for item in ocr_items
             if start_ms <= int(item["timestamp_ms"]) < end_ms
         )
-        if spoken or visible:
+        visual_meaning = " / ".join(
+            str(item.get("meaning") or item.get("scene") or "")
+            for item in visual_items or []
+            if start_ms <= int(item.get("timestamp_ms", 0)) < end_ms
+        )
+        if spoken or visible or visual_meaning:
             lines.append(
-                f"[{start_ms}-{end_ms}] 语音={spoken[:1800]} || 画面文字={visible[:500] or '无'}"
+                f"[{start_ms}-{end_ms}] 语音={spoken[:1800]} || "
+                f"画面文字={visible[:500] or '无'} || "
+                f"视觉语义={visual_meaning[:800] or '无'}"
             )
     return "\n".join(lines)
 
@@ -793,6 +872,7 @@ def validate_and_normalize_chapters(
                 str(item.get("summary") or "")[:600],
             )
         )
+    parsed = [item for item in parsed if not _is_low_quality_chapter(item[1], item[2])]
     parsed = sorted(dict.fromkeys(parsed), key=lambda item: item[0])
     if not parsed or parsed[0][0] > 15_000 or parsed[-1][0] < duration_ms * 0.65:
         return []
@@ -820,6 +900,18 @@ def validate_and_normalize_chapters(
     return chapters
 
 
+def _is_low_quality_chapter(title: str, summary: str) -> bool:
+    """按文本结构过滤 OCR 碎片和无语义口水话，不使用任何垂类关键词黑名单。"""
+    text = normalize_chinese_text(f"{title} {summary}")
+    compact_title = re.sub(r"\s+", "", normalize_chinese_text(title))
+    semantic_chars = re.findall(r"[\u4e00-\u9fffA-Za-z]", compact_title)
+    if not semantic_chars or len(semantic_chars) / max(1, len(compact_title)) < 0.45:
+        return True
+    if re.search(r"然后就是一些|然后就是|一些东西|大家可以看到|就这样|好的今天|感谢观看", text):
+        return True
+    return len(set(text.replace(" ", ""))) <= 4
+
+
 class LocalProcessingManager:
     """开发环境后台 Worker：任务与 HTTP 请求解耦，并持续更新可观察进度。"""
 
@@ -830,12 +922,16 @@ class LocalProcessingManager:
         data_dir: Path,
         asr_model: str,
         llm: DeepSeekClient | None,
+        vlm: OllamaVisionClient | SiliconFlowVisionClient | None = None,
+        web_search: McpSearchClient | SearxngClient | None = None,
         web_downloader: YtDlpAdapter | None = None,
     ) -> None:
         self._store = store
         self._data_dir = data_dir.resolve()
         self._asr_model = asr_model
         self._llm = llm
+        self._vlm = vlm
+        self._web_search = web_search
         self._web_downloader = web_downloader
         self._runs: dict[UUID, ProcessingRun] = {}
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
@@ -939,11 +1035,19 @@ class LocalProcessingManager:
             cache_dir = self._data_dir / "processing-cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_key = getattr(video.source, "sha256", None) or source.stem
-            transcript_cache = cache_dir / f"{cache_key}.{self._asr_model}.transcript.json"
+            transcript_cache = cache_dir / (
+                f"{cache_key}.{ANALYSIS_CACHE_VERSION}.{self._asr_model}.transcript.json"
+            )
             if transcript_cache.exists():
                 transcript = json.loads(transcript_cache.read_text(encoding="utf-8"))
             else:
-                transcript = await asyncio.to_thread(transcribe, source, self._asr_model)
+                source_subtitles = await asyncio.to_thread(load_sidecar_subtitles, source)
+                if source_subtitles:
+                    transcript = source_subtitles
+                    video.metadata["transcript_source"] = "source-subtitle-track"
+                else:
+                    transcript = await asyncio.to_thread(transcribe, source, self._asr_model)
+                    video.metadata["transcript_source"] = "faster-whisper"
             # 旧缓存也在此处归一化，因此无需重新跑耗时的 Whisper。
             transcript = [
                 {**item, "text": normalize_chinese_text(str(item["text"]))} for item in transcript
@@ -961,7 +1065,7 @@ class LocalProcessingManager:
             await self._update(
                 run, "ocr", "识别画面文字", 0.72, f"正在识别 {len(frames)} 张采样画面中的文字"
             )
-            ocr_cache = cache_dir / f"{cache_key}.ocr.json"
+            ocr_cache = cache_dir / f"{cache_key}.{ANALYSIS_CACHE_VERSION}.ocr.json"
 
             def report_ocr_progress(completed: int, total: int) -> None:
                 ratio = completed / max(1, total)
@@ -984,7 +1088,51 @@ class LocalProcessingManager:
                 ocr_cache,
                 report_ocr_progress,
             )
-            speaker_cache = cache_dir / f"{cache_key}.speakers.identity-v4.json"
+            visual_model_key = re.sub(r"[^A-Za-z0-9_.-]", "_", self._vlm.model) if self._vlm else ""
+            visual_cache = (
+                cache_dir
+                / f"{cache_key}.{ANALYSIS_CACHE_VERSION}.{visual_model_key}.visual-v2.json"
+                if self._vlm
+                else None
+            )
+            visual_items: list[dict[str, Any]] = []
+            if self._vlm and visual_cache:
+                await self._update(
+                    run,
+                    "visual_understanding",
+                    "理解关键画面",
+                    0.825,
+                    "Qwen3-VL 正在理解场景、人物、动作和界面含义",
+                )
+                if visual_cache.exists():
+                    try:
+                        visual_items = list(json.loads(visual_cache.read_text(encoding="utf-8")))
+                    except (json.JSONDecodeError, OSError, TypeError):
+                        visual_items = []
+                if not visual_items:
+                    selected_frames = select_visual_frames(frames, max_frames=24)
+                    for offset in range(0, len(selected_frames), 4):
+                        batch = selected_frames[offset : offset + 4]
+                        try:
+                            visual_items.extend(
+                                await self._vlm.analyze_frames(batch, video_id=str(video.id))
+                            )
+                        except Exception as exc:
+                            video.metadata["vlm_batch_error"] = type(exc).__name__
+                        run.message = (
+                            f"关键画面理解 {min(offset + len(batch), len(selected_frames))}/"
+                            f"{len(selected_frames)}，结果已分批保存"
+                        )
+                        visual_cache.write_text(
+                            json.dumps(visual_items, ensure_ascii=False), encoding="utf-8"
+                        )
+                video.metadata["visual_understanding"] = (
+                    f"{self._vlm.provider}:{self._vlm.model}:semantic-frame-v1"
+                )
+                video.metadata["vlm_observations"] = len(visual_items)
+            speaker_cache = (
+                cache_dir / f"{cache_key}.{ANALYSIS_CACHE_VERSION}.speakers.identity-v6.json"
+            )
             speaker_labels: list[str] = []
             if speaker_cache.exists():
                 try:
@@ -1008,7 +1156,9 @@ class LocalProcessingManager:
             for item, speaker in zip(transcript, speaker_labels, strict=True):
                 item["speaker"] = speaker
             video.metadata["speaker_count"] = len(set(speaker_labels))
-            video.metadata["speaker_diarization"] = "acoustic+dialogue+ocr-multiprototype-v4"
+            video.metadata["speaker_diarization"] = (
+                "conservative-gate+dialogue+ocr-multiprototype-v5"
+            )
             visible_names = " ".join(str(item.get("text", "")) for item in ocr_items)
             video.metadata["ocr_verified_speakers"] = sorted(
                 name for name in set(speaker_labels) if name in visible_names
@@ -1042,6 +1192,53 @@ class LocalProcessingManager:
                         provenance=Provenance(producer="rapidocr", model="onnxruntime"),
                     )
                 )
+            frame_paths = {int(item["timestamp_ms"]): item["path"] for item in frames}
+            for item in visual_items:
+                timestamp_ms = int(item.get("timestamp_ms", 0))
+                scene = str(item.get("scene", ""))
+                meaning = str(item.get("meaning", ""))
+                subjects = "、".join(str(value) for value in item.get("subjects", []))
+                actions = "、".join(str(value) for value in item.get("actions", []))
+                description = "；".join(
+                    value
+                    for value in (
+                        f"场景：{scene}" if scene else "",
+                        f"主体：{subjects}" if subjects else "",
+                        f"动作/事件：{actions}" if actions else "",
+                        f"画面含义：{meaning}" if meaning else "",
+                    )
+                    if value
+                )
+                frame_path = frame_paths.get(timestamp_ms)
+                artifacts.append(
+                    TimelineArtifact(
+                        video_id=video.id,
+                        kind=TimelineKind.VISUAL,
+                        time_range=TimeRange(
+                            start_ms=timestamp_ms,
+                            end_ms=min(video.duration_ms, timestamp_ms + 30_000),
+                        ),
+                        title=scene[:80] or "视觉语义观察",
+                        text=description or "该画面的语义信息不足。",
+                        confidence=max(
+                            0.35,
+                            min(0.95, float(item.get("importance", 0.65))),
+                        ),
+                        observation_type=ObservationType.INFERENCE,
+                        snapshot_key=(
+                            f"frames/{video.id}/{frame_path.name}" if frame_path else None
+                        ),
+                        tags=[
+                            "vlm-observation",
+                            *[str(value) for value in item.get("entities", [])],
+                        ],
+                        provenance=Provenance(
+                            producer="qwen3-vl-visual-observer",
+                            model=self._vlm.model if self._vlm else None,
+                            prompt_version="semantic-frame-v1",
+                        ),
+                    )
+                )
 
             # LLM 增强失败时仍会保存这些直接证据；先保留在内存中，以便同一次章节调用顺手
             # 修正少量明确的 ASR 错字，避免为字幕审核再付一次模型调用费用。
@@ -1051,7 +1248,11 @@ class LocalProcessingManager:
             subtitle_correction_count = 0
 
             await self._update(
-                run, "summarizing", "理解与自动分段", 0.84, "正在融合语音与画面文字生成章节"
+                run,
+                "summarizing",
+                "理解与自动分段",
+                0.88,
+                "正在融合语音、OCR、视觉语义和联网术语证据生成章节",
             )
             if self._llm and transcript:
                 # 将每句 ASR 与时间上邻近的 OCR 放在一起，模型才能判断同音专名究竟
@@ -1064,23 +1265,57 @@ class LocalProcessingManager:
                         for ocr in ocr_items
                         if abs(int(ocr["timestamp_ms"]) - midpoint) <= 18_000
                     ][:2]
+                    nearby_visual = [
+                        str(visual.get("meaning") or visual.get("scene") or "")
+                        for visual in visual_items
+                        if abs(int(visual.get("timestamp_ms", 0)) - midpoint) <= 45_000
+                    ][:2]
                     ocr_context = " | ".join(nearby_ocr) if nearby_ocr else "无邻近OCR"
+                    visual_context = (
+                        " | ".join(nearby_visual) if nearby_visual else "无邻近视觉语义"
+                    )
                     aligned_lines.append(
                         f"[index={index} start_ms={item['start_ms']}] "
                         f"speaker={item.get('speaker', 'Speaker ?')} ASR={item['text']} "
-                        f"|| 邻近画面文字={ocr_context}"
+                        f"|| 邻近画面文字={ocr_context} || 画面语义={visual_context}"
                     )
+                terminology_evidence: list[dict[str, str]] = []
+                if self._web_search and visual_items:
+                    entities = list(
+                        dict.fromkeys(
+                            str(entity).strip()
+                            for item in visual_items
+                            for entity in item.get("entities", [])
+                            if 2 <= len(str(entity).strip()) <= 40
+                        )
+                    )[:6]
+                    search_batches = await asyncio.gather(
+                        *(
+                            self._web_search.search(f"{video.title} {entity}", limit=3)
+                            for entity in entities
+                        )
+                    )
+                    terminology_evidence = [
+                        {"query_entity": entity, **result}
+                        for entity, results in zip(entities, search_batches, strict=True)
+                        for result in results
+                    ]
+                    video.metadata["web_terminology_results"] = len(terminology_evidence)
                 compact = (
                     f"视频标题：{video.title}\n"
                     f"作者/来源：{video.metadata.get('uploader', '未知')}\n"
+                    f"联网术语证据：{json.dumps(terminology_evidence, ensure_ascii=False)}\n"
                     + "\n".join(aligned_lines)
                 )
                 try:
                     summary = await self._llm.complete_json(
                         system=(
-                            "你是视频时间轴策展 Agent。仅依据给定转写和 OCR，输出 JSON："
+                            "你是视频时间轴策展 Agent。依据转写、OCR、Qwen3-VL画面语义和"
+                            "联网术语证据输出 JSON："
                             "summary 字符串；chapters 数组，每项含 start_ms、end_ms、title、"
-                            "summary；subtitle_corrections 数组，每项含 index、corrected_text、"
+                            "summary；quick_questions 数组，预生成3到5个帮助用户理解视频的"
+                            "问题与答案，每项含question、answer、start_ms；"
+                            "subtitle_corrections 数组，每项含 index、corrected_text、"
                             "reason。字幕修正只处理结合上下文、邻近OCR、标题后非常明确的识别错误，"
                             "最多 60 条；OCR若只是菜单或界面无关文字，不得强行替换字幕；"
                             "不要润色口语、不要改变原意、没有明确错误就返回空数组。不要编造。"
@@ -1088,7 +1323,7 @@ class LocalProcessingManager:
                             '"end_ms":60000,"title":"章节名","summary":"本节解释"}],'
                             '"subtitle_corrections":[]}。章节必须连续覆盖全片，标题体现具体主题。'
                             "若字幕明确声明有N条建议/要点并出现第一、第二等序号，必须为每一条单独分章，"
-                            "不得把多个编号合并；角色名和系统名优先采用OCR中的可见写法。"
+                            "不得把多个编号合并；任何专有名词都应综合字幕、画面和上下文核验。"
                         ),
                         user=compact[:100_000],
                         purpose="video_timeline_summary",
@@ -1101,6 +1336,25 @@ class LocalProcessingManager:
                     video.metadata["llm_summary_error"] = type(exc).__name__
                     summary = {"summary": "", "chapters": []}
                 video.metadata["summary"] = str(summary.get("summary", ""))
+                quick_questions = []
+                for item in summary.get("quick_questions", [])[:5]:
+                    if not isinstance(item, dict):
+                        continue
+                    question = str(item.get("question", "")).strip()
+                    answer = str(item.get("answer", "")).strip()
+                    if question and answer:
+                        try:
+                            start_ms = max(0, int(item.get("start_ms", 0)))
+                        except (TypeError, ValueError):
+                            start_ms = 0
+                        quick_questions.append(
+                            {
+                                "question": question[:160],
+                                "answer": answer[:1_200],
+                                "start_ms": start_ms,
+                            }
+                        )
+                video.metadata["quick_questions"] = quick_questions
                 corrections = list(summary.get("subtitle_corrections", []))[:60]
                 if not corrections and ocr_items:
                     # 时间轴策展调用需要同时分章和总结，偶尔会忽略字幕修正字段。
@@ -1150,6 +1404,83 @@ class LocalProcessingManager:
                         }
                     )
                     subtitle_correction_count += 1
+                # 最终审校：在章节生成后再次结合上下文核对专业名词和明显同音错字。
+                if self._llm and transcript:
+                    try:
+                        final_lines = "\n".join(
+                            f"[index={i}] {item.get('text', '')}"
+                            for i, item in enumerate(transcript)
+                        )
+                        # 先让模型从 ASR 上下文中挑出疑似专有名词，再通过 MCP 搜索核验。
+                        # 这能覆盖画面中没有出现、但语音里提到的新角色名和新版本术语。
+                        if self._web_search:
+                            candidates = await self._llm.complete_json(
+                                system=(
+                                    "从字幕中提取最多10个疑似识别错误的专有名词、实体名、"
+                                    "产品名、领域术语或版本标识。不要预设内容领域。"
+                                    "只输出JSON：{terms:[字符串]}。"
+                                ),
+                                user=f"视频标题：{video.title}\n{final_lines}"[:80_000],
+                                purpose="subtitle_term_candidates",
+                                video_id=str(video.id),
+                                max_tokens=1_500,
+                                thinking=False,
+                            )
+                            terms = [
+                                str(term).strip()
+                                for term in candidates.get("terms", [])[:10]
+                                if 1 < len(str(term).strip()) <= 40
+                            ]
+                            searched = await asyncio.gather(
+                                *(
+                                    self._web_search.search(f"{video.title} {term}", limit=3)
+                                    for term in terms
+                                )
+                            )
+                            terminology_evidence.extend(
+                                {"query_entity": term, **result}
+                                for term, results in zip(terms, searched, strict=True)
+                                for result in results
+                            )
+                        final_review = await self._llm.complete_json(
+                            system=(
+                                "你是最终字幕校对 Agent。只修正明确的中文错字、同音字和专业名词；"
+                                "必须结合前后句判断，不能润色口语，不能凭空改写。输出 JSON："
+                                "{subtitle_corrections:[{index,corrected_text,reason}]}。没有充分依据就不要修改。"
+                            ),
+                            user=(
+                                f"视频标题：{video.title}\n"
+                                "联网术语核验结果："
+                                f"{json.dumps(terminology_evidence, ensure_ascii=False)}\n"
+                                f"{final_lines}"
+                            )[:100_000],
+                            purpose="subtitle_final_audit",
+                            video_id=str(video.id),
+                            max_tokens=8_000,
+                            thinking=False,
+                        )
+                        for correction in list(final_review.get("subtitle_corrections", []))[:80]:
+                            try:
+                                index = int(correction["index"])
+                                corrected = normalize_chinese_text(
+                                    str(correction["corrected_text"])
+                                )
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                            if not 0 <= index < len(transcript) or not corrected:
+                                continue
+                            if corrected != str(transcript[index]["text"]):
+                                transcript[index]["text"] = corrected
+                                direct_artifacts[index] = direct_artifacts[index].model_copy(
+                                    update={
+                                        "text": corrected,
+                                        "tags": [*direct_artifacts[index].tags, "final-audited"],
+                                    }
+                                )
+                                subtitle_correction_count += 1
+                        video.metadata["subtitle_review_mode"] = "asr+ocr+context+final-audit"
+                    except Exception as exc:
+                        video.metadata["subtitle_final_audit_error"] = type(exc).__name__
                 raw_chapters = summary.get("chapters", [])
                 spoken_section_count = _spoken_section_count(transcript)
                 if spoken_section_count >= 4:
@@ -1194,22 +1525,28 @@ class LocalProcessingManager:
                     model_name=self._llm.model,
                     prompt_version="full-transcript-v1",
                 )
-                if not model_chapters and video.duration_ms >= 10 * 60_000:
+                # 过滤掉低质量标题后，无论视频长短都进行一次语义恢复，不能退回 OCR 碎片标题。
+                if not model_chapters:
                     # 长视频的逐句输入容易超出上下文或产生断裂时间段。第二阶段先压缩为
                     # 完整覆盖的一分钟语义窗口，再按内容形态进行真正的主题聚类。
                     semantic_windows = build_semantic_windows(
-                        transcript, ocr_items, video.duration_ms
+                        transcript,
+                        ocr_items,
+                        video.duration_ms,
+                        visual_items=visual_items,
                     )
                     try:
                         recovery = await self._llm.complete_json(
                             system=(
-                                "你是通用视频语义分段 Agent。先判断视频形态，再选择对应的章节单位："
-                                "访谈按主持人的问题、追问和嘉宾回答主题；教程按任务步骤；游戏视频按"
-                                "目标、关卡和关键事件；Vlog按地点、活动和叙事事件；课程按主题与知识点。"
-                                "同时参考语音主题转折、说话人提示、停顿和画面OCR变化。不要按固定时长"
+                                "你是通用视频语义分段 Agent。先从证据中归纳视频的组织方式，"
+                                "不要预设领域；"
+                                "再选择能体现内容推进的章节单位，例如问题变化、目标变化、步骤推进、"
+                                "地点或参与者变化、论点转折、操作阶段或关键事件。"
+                                "同时参考语音主题、说话人、停顿、画面结构、OCR和视觉语义变化。"
+                                "视觉语义用于理解主体、关系、状态、动作和事件；不要按固定时长"
                                 "机械切分，不要把寒暄单独成章。输出JSON：video_format、summary、chapters。"
                                 "chapters每项包含start_ms、end_ms、title、summary；必须从0开始、按时间"
-                                "递增并覆盖到视频结尾。通常4到20章，访谈标题优先写成所讨论的问题。"
+                                "递增并覆盖到视频结尾。通常4到20章；标题必须表达该段的核心意义。"
                             ),
                             user=(
                                 f"视频标题：{video.title}\n时长：{video.duration_ms}ms\n"

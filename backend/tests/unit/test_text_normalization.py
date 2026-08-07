@@ -3,6 +3,9 @@ from uuid import uuid4
 
 from lets_go_video_agent.domain.common import Provenance, TimeRange
 from lets_go_video_agent.domain.timeline import TimelineArtifact, TimelineKind
+from lets_go_video_agent.infrastructure.models.ollama_vision_client import (
+    select_visual_frames,
+)
 from lets_go_video_agent.media.local_pipeline import (
     _extract_ocr_speaker_anchors,
     _select_speaker_clusters,
@@ -110,6 +113,27 @@ def test_speaker_cluster_selector_detects_two_clear_groups() -> None:
     labels = _select_speaker_clusters(np.vstack([first, second]), max_speakers=4)
 
     assert len(set(labels.tolist())) == 2
+
+
+def test_speaker_cluster_selector_keeps_one_voice_with_gradual_timbre_change() -> None:
+    import numpy as np
+
+    # 模拟同一个人在视频前后音量、语气缓慢变化；不应因此制造第二位说话人。
+    progression = np.linspace(-0.8, 0.8, 80)
+    matrix = np.column_stack([progression, progression * 0.35, progression * -0.2])
+    labels = _select_speaker_clusters(matrix, max_speakers=4)
+
+    assert len(set(labels.tolist())) == 1
+
+
+def test_visual_frame_selection_is_bounded_and_covers_both_ends() -> None:
+    frames = [{"timestamp_ms": index * 1_000, "path": Path(f"{index}.jpg")} for index in range(100)]
+
+    selected = select_visual_frames(frames, max_frames=24)
+
+    assert len(selected) == 24
+    assert selected[0]["timestamp_ms"] == 0
+    assert selected[-1]["timestamp_ms"] == 99_000
 
 
 def test_ocr_speaker_anchor_uses_quote_instead_of_nearest_timestamp() -> None:

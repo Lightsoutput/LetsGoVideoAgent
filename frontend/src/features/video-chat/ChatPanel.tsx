@@ -35,6 +35,28 @@ const QUICK_QUESTIONS = [
   "当前画面中能看到哪些信息？",
 ];
 
+interface PreparedQuestion {
+  question: string;
+  answer: string;
+  start_ms: number;
+}
+
+function preparedOverview(video: Video | null) {
+  const summary = typeof video?.metadata.summary === "string" ? video.metadata.summary : "";
+  const rawQuestions = Array.isArray(video?.metadata.quick_questions)
+    ? video.metadata.quick_questions
+    : [];
+  const questions = rawQuestions.filter(
+    (item): item is PreparedQuestion =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof item.question === "string" &&
+      typeof item.answer === "string" &&
+      typeof item.start_ms === "number",
+  );
+  return { summary, questions };
+}
+
 function uniqueCitations(answer: Answer) {
   const seen = new Set<string>();
   return answer.citations.filter((citation) => {
@@ -56,13 +78,15 @@ export function ChatPanel({
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const overview = preparedOverview(video);
 
   function buildTarget(): QuestionTarget {
-    if (scope === "frame") return { kind: "frame", timestamp_ms: currentTimeMs };
+    const timestampMs = Math.max(0, Math.round(currentTimeMs));
+    if (scope === "frame") return { kind: "frame", timestamp_ms: timestampMs };
     if (scope === "moment") {
       return {
         kind: "moment",
-        timestamp_ms: currentTimeMs,
+        timestamp_ms: timestampMs,
         context_window_ms: 8_000,
       };
     }
@@ -71,8 +95,8 @@ export function ChatPanel({
         kind: "range",
         time_range:
           activeRange ?? {
-            start_ms: Math.max(0, currentTimeMs - 30_000),
-            end_ms: currentTimeMs + 30_000,
+            start_ms: Math.max(0, Math.round(currentTimeMs - 30_000)),
+            end_ms: Math.round(currentTimeMs + 30_000),
           },
       };
     }
@@ -100,7 +124,12 @@ export function ChatPanel({
         ),
       );
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "Agent 调查失败";
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === "string"
+            ? reason
+            : JSON.stringify(reason);
       setError(message);
       setTurns((items) =>
         items.map((item) =>
@@ -165,6 +194,21 @@ export function ChatPanel({
             <p>
               你可以问整体内容、某个章节、这一刻发生了什么，或暂停后询问当前帧。
             </p>
+            {overview.summary && (
+              <section className="prepared-overview">
+                <strong>视频速览</strong>
+                <p>{overview.summary}</p>
+                {overview.questions.map((item) => (
+                  <details key={item.question}>
+                    <summary>{item.question}</summary>
+                    <p>{item.answer}</p>
+                    <button onClick={() => onSeek(item.start_ms)} type="button">
+                      跳到 {formatTimestamp(item.start_ms)}
+                    </button>
+                  </details>
+                ))}
+              </section>
+            )}
             <div className="quick-questions">
               {QUICK_QUESTIONS.map((question) => (
                 <button

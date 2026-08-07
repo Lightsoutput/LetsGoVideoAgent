@@ -1088,6 +1088,44 @@ p {
   max-width: 300px;
 }
 
+.prepared-overview {
+  background: rgba(46, 230, 170, 0.035);
+  border: 1px solid rgba(46, 230, 170, 0.16);
+  border-radius: 9px;
+  margin: 0 0 10px;
+  padding: 10px;
+  text-align: left;
+}
+
+.prepared-overview > p {
+  margin: 6px 0 10px;
+  max-width: none;
+}
+
+.prepared-overview details {
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  padding: 7px 0;
+}
+
+.prepared-overview summary {
+  color: var(--muted-strong);
+  cursor: pointer;
+}
+
+.prepared-overview details p {
+  margin: 6px 0;
+  max-width: none;
+}
+
+.prepared-overview button {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 10px;
+  padding: 0;
+}
+
 .quick-questions {
   display: flex;
   flex-direction: column;

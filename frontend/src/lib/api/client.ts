@@ -29,10 +29,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const problem = (await response.json().catch(() => null)) as
-      | { detail?: string; code?: string }
+      | { detail?: unknown; code?: string }
       | null;
+    const detail =
+      typeof problem?.detail === "string"
+        ? problem.detail
+        : problem?.detail && typeof problem.detail === "object"
+          ? JSON.stringify(problem.detail)
+          : `请求失败（HTTP ${response.status}）`;
     throw new ApiError(
-      problem?.detail ?? `请求失败（HTTP ${response.status}）`,
+      detail,
       response.status,
       problem?.code,
     );

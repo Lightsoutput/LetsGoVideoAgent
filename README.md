@@ -1,5 +1,7 @@
 # LetsGoVideoAgent
 
+项目结构、运行维护、待办与风险见 [维护文档](docs/MAINTENANCE.md)；本地启动见 [开发指南](docs/LOCAL_DEVELOPMENT.md)。
+
 一个通用的多 Agent 视频理解项目，可处理课程、游戏、攻略、访谈和 Vlog 等视频。
 
 ## 主要功能
@@ -31,6 +33,15 @@ pnpm dev
 ```
 
 打开 `http://localhost:3000`，API 文档位于 `http://localhost:8000/docs`。
+
+视觉理解默认使用硅基流动 `Qwen/Qwen3-VL-32B-Instruct`，本地 Ollama
+`qwen3-vl:4b` 可作为离线降级。免费联网检索以 SearXNG MCP Server 提供：
+
+```powershell
+.\scripts\start-searxng.ps1
+```
+
+MCP 地址为 `http://127.0.0.1:8090/mcp`。
 
 ## 测试
 

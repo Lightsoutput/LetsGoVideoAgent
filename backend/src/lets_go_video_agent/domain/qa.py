@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from lets_go_video_agent.domain.common import DomainModel, ModelUsage, TimeRange, utc_now
 from lets_go_video_agent.domain.timeline import Evidence, EvidenceKind
@@ -25,10 +25,20 @@ class MomentTarget(DomainModel):
     timestamp_ms: int = Field(ge=0)
     context_window_ms: int = Field(default=8_000, ge=1_000, le=60_000)
 
+    @field_validator("timestamp_ms", mode="before")
+    @classmethod
+    def round_timestamp(cls, value: object) -> object:
+        return round(value) if isinstance(value, float) else value
+
 
 class FrameTarget(DomainModel):
     kind: Literal["frame"] = "frame"
     timestamp_ms: int = Field(ge=0)
+
+    @field_validator("timestamp_ms", mode="before")
+    @classmethod
+    def round_timestamp(cls, value: object) -> object:
+        return round(value) if isinstance(value, float) else value
 
 
 QuestionTarget = Annotated[

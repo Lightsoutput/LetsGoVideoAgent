@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     log_level: str = "INFO"
+    outbound_http_proxy: str | None = None
 
     repository_backend: str = "memory"
     workflow_backend: str = "inline"
@@ -59,6 +60,13 @@ class Settings(BaseSettings):
     llm_api_base: str | None = None
     vlm_provider: str = "mock"
     vlm_model: str = "mock-vision-model"
+    vlm_api_base: str = "http://127.0.0.1:11434"
+    vlm_api_key: str | None = None
+    search_provider: str = "disabled"
+    search_api_base: str = "http://127.0.0.1:8888"
+    search_mcp_host: str = "127.0.0.1"
+    search_mcp_port: int = 8090
+    search_mcp_url: str = "http://127.0.0.1:8090/mcp"
 
     # P0 默认在 CPU 上运行 small，兼顾中文准确率、下载体积与普通开发机速度。
     local_asr_model: str = "small"

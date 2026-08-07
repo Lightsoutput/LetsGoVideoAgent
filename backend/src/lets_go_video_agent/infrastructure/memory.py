@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from lets_go_video_agent.application.ports import RunRecord, TimelineRepository
-from lets_go_video_agent.domain.common import TimeRange
+from lets_go_video_agent.domain.common import Provenance, TimeRange
 from lets_go_video_agent.domain.qa import (
     Answer,
     FrameTarget,
@@ -165,9 +167,7 @@ class InMemoryRetrieval:
         )
         return [self._to_evidence(artifact) for _, artifact in candidates[:limit]]
 
-    def _summary_evidence(
-        self, artifacts: list[TimelineArtifact], limit: int
-    ) -> list[Evidence]:
+    def _summary_evidence(self, artifacts: list[TimelineArtifact], limit: int) -> list[Evidence]:
         """为全片总结按时间均匀聚合证据，避免关键词检索只命中开头和结尾。"""
         chapters = [item for item in artifacts if item.kind is TimelineKind.CHAPTER]
         transcripts = [
@@ -181,18 +181,14 @@ class InMemoryRetrieval:
             semantic = self._aggregate_transcript_by_chapters(chapters, transcripts)
             if not semantic:
                 # 合成测试或外部索引可能只有章节而没有逐句字幕，仍保留章节级证据。
-                semantic = [
-                    self._to_evidence(item) for item in chapters[: max(1, limit - 3)]
-                ]
+                semantic = [self._to_evidence(item) for item in chapters[: max(1, limit - 3)]]
         else:
             semantic = self._aggregate_transcript_windows(
                 transcripts,
                 bucket_count=min(10, max(4, limit - 4)),
             )
         visuals = [
-            item
-            for item in artifacts
-            if item.kind in {TimelineKind.VISUAL, TimelineKind.OCR}
+            item for item in artifacts if item.kind in {TimelineKind.VISUAL, TimelineKind.OCR}
         ]
         visuals.sort(key=lambda item: item.time_range.start_ms)
         slots = max(0, limit - len(semantic))
@@ -209,7 +205,8 @@ class InMemoryRetrieval:
             items = [
                 item
                 for item in transcripts
-                if chapter.time_range.start_ms <= item.time_range.start_ms
+                if chapter.time_range.start_ms
+                <= item.time_range.start_ms
                 < chapter.time_range.end_ms
             ]
             if not items:
@@ -313,8 +310,18 @@ class InMemoryFrameInspector:
     返回指定时刻附近已经生成的视觉与 OCR 证据，使 Agent 流程可离线、可重复测试。
     """
 
-    def __init__(self, retrieval: InMemoryRetrieval) -> None:
+    def __init__(
+        self,
+        retrieval: InMemoryRetrieval,
+        *,
+        store: Any | None = None,
+        data_dir: Path | None = None,
+        vlm: Any | None = None,
+    ) -> None:
         self._retrieval = retrieval
+        self._store = store
+        self._data_dir = data_dir.resolve() if data_dir else None
+        self._vlm = vlm
 
     async def inspect(
         self,
@@ -323,6 +330,92 @@ class InMemoryFrameInspector:
         timestamp_ms: int,
         query: str,
     ) -> Sequence[Evidence]:
+        # 当前帧问答必须分析用户指定时间的真实图片，不能把附近旧证据改写成当前时间。
+        if self._store and self._data_dir and self._vlm:
+            video = await self._store.get(video_id)
+            if video and video.source_object_key:
+                source = (self._data_dir / video.source_object_key).resolve()
+                if self._data_dir in source.parents and source.exists():
+                    from lets_go_video_agent.media.local_pipeline import extract_frame_at
+
+                    frame_dir = self._data_dir / "frames-on-demand" / str(video_id)
+                    frame_dir.mkdir(parents=True, exist_ok=True)
+                    frame_path = frame_dir / f"{timestamp_ms:010d}.jpg"
+                    if not frame_path.exists():
+                        await extract_frame_at(source, frame_path, timestamp_ms)
+                    try:
+                        observations = await self._vlm.analyze_frames(
+                            [{"path": frame_path, "timestamp_ms": timestamp_ms}],
+                            video_id=str(video_id),
+                            question=query,
+                        )
+                    except Exception:
+                        # 云端 VLM 网络波动不能让问答接口崩溃；降级时仍只分析同一张精确帧。
+                        from lets_go_video_agent.media.local_pipeline import run_ocr
+
+                        ocr_cache = frame_dir / f"{timestamp_ms:010d}.ocr.json"
+                        ocr_items = await asyncio.to_thread(
+                            run_ocr,
+                            [{"path": frame_path, "timestamp_ms": timestamp_ms}],
+                            ocr_cache,
+                        )
+                        visible_text = " / ".join(
+                            str(item.get("text") or "").strip()
+                            for item in ocr_items
+                            if str(item.get("text") or "").strip()
+                        )
+                        return [
+                            Evidence(
+                                video_id=video_id,
+                                kind=EvidenceKind.FRAME,
+                                timestamp_ms=timestamp_ms,
+                                quote=visible_text or None,
+                                description=(
+                                    f"当前精确帧可见文字：{visible_text}"
+                                    if visible_text
+                                    else "已取得当前精确帧，但视觉模型暂时不可连接。"
+                                ),
+                                confidence=0.72 if visible_text else 0.2,
+                                snapshot_url=(
+                                    f"/api/v1/videos/{video_id}/frame-at/{timestamp_ms}.jpg"
+                                ),
+                                provenance=Provenance(
+                                    producer="exact-frame-ocr-fallback",
+                                    tool_version="network-safe-v1",
+                                ),
+                            )
+                        ]
+                    if observations:
+                        observation = observations[0]
+                        description = "；".join(
+                            part
+                            for part in (
+                                str(observation.get("scene") or "").strip(),
+                                str(observation.get("meaning") or "").strip(),
+                                "、".join(str(x) for x in observation.get("actions", [])),
+                            )
+                            if part
+                        )
+                        return [
+                            Evidence(
+                                video_id=video_id,
+                                kind=EvidenceKind.FRAME,
+                                timestamp_ms=timestamp_ms,
+                                description=description or "VLM 未返回可靠的画面语义描述",
+                                confidence=float(observation.get("importance") or 0.8),
+                                snapshot_url=(
+                                    f"/api/v1/videos/{video_id}/frame-at/{timestamp_ms}.jpg"
+                                ),
+                                provenance=Provenance(
+                                    producer="on-demand-frame-vlm",
+                                    model=getattr(self._vlm, "model", None),
+                                    prompt_version="exact-frame-question-v1",
+                                ),
+                            )
+                        ]
+                    # 已成功抽取精确帧但 VLM 无结果时宁可返回无证据，也不能降级成邻近旧帧。
+                    return []
+
         target = FrameTarget(timestamp_ms=timestamp_ms)
         evidence = await self._retrieval.search(
             video_id=video_id,

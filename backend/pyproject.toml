@@ -25,6 +25,7 @@ dependencies = [
 agents = [
   "langgraph>=1.0,<2",
   "litellm>=1.75,<2",
+  "mcp>=1.13,<2",
   "tenacity>=9.1,<10",
 ]
 infra = [
@@ -70,6 +71,7 @@ dev = [
 video-agent-api = "lets_go_video_agent.main:run"
 video-agent-worker = "lets_go_video_agent.workflows.worker:run"
 video-agent-eval = "lets_go_video_agent.evaluation.cli:run"
+video-agent-search-mcp = "lets_go_video_agent.mcp.search_server:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
