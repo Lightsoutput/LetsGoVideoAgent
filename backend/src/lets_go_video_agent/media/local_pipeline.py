@@ -595,7 +595,7 @@ def curate_representative_frames(
     if not frames:
         return []
 
-    sections = chapters
+    sections = build_major_sections(chapters, video_id=video_id, duration_ms=duration_ms)
     if not sections:
         sections = [
             TimelineArtifact(
@@ -617,7 +617,7 @@ def curate_representative_frames(
     ocr_by_timestamp = {int(item["timestamp_ms"]): str(item["text"]) for item in ocr_items}
     used_timestamps: set[int] = set()
     result: list[TimelineArtifact] = []
-    max_total_frames = min(24, max(8, len(sections) * 2))
+    max_total_frames = min(6, max(3, len(sections)))
     for section_index, section in enumerate(sections, start=1):
         if len(result) >= max_total_frames:
             break
@@ -632,7 +632,8 @@ def curate_representative_frames(
 
         duration = section.time_range.end_ms - section.time_range.start_ms
         # 短视频章节通常只有 20～60 秒，也应覆盖前半段和后半段，不能总取章节尾部。
-        fractions = (0.30, 0.70) if duration >= 90_000 else (0.5,)
+        # 关键帧按大节保留一张代表图；细节通过小节文本和按需当前帧查看。
+        fractions = (0.5,)
         selected: list[dict[str, Any]] = []
         for fraction in fractions:
             target = section.time_range.start_ms + int(duration * fraction)
@@ -667,7 +668,8 @@ def curate_representative_frames(
         for frame_index, frame in enumerate(selected, start=1):
             timestamp_ms = int(frame["timestamp_ms"])
             used_timestamps.add(timestamp_ms)
-            title = f"{section_index:02d}-{frame_index:02d}｜{section.title or '未命名章节'}"
+            section_title = str(section.title or "未命名章节").split("｜", 1)[-1]
+            title = f"{section_index:02d}｜{section_title}"
             result.append(
                 TimelineArtifact(
                     video_id=video_id,
@@ -696,6 +698,66 @@ def curate_representative_frames(
                     ),
                 )
             )
+    return result
+
+
+def organize_hierarchical_chapters(
+    chapters: list[TimelineArtifact],
+) -> list[TimelineArtifact]:
+    """把模型章节标注为有限数量的大节/小节，避免时间轴失控。"""
+    if not chapters:
+        return []
+    minor_per_major = max(1, math.ceil(len(chapters) / 6))
+    organized: list[TimelineArtifact] = []
+    for index, chapter in enumerate(chapters):
+        major_index = index // minor_per_major + 1
+        minor_index = index % minor_per_major + 1
+        organized.append(
+            chapter.model_copy(
+                update={
+                    "title": f"{major_index:02d}-{minor_index:02d}｜{chapter.title}",
+                    "tags": [
+                        *chapter.tags,
+                        f"major-section:{major_index:02d}",
+                        f"minor-section:{minor_index:02d}",
+                    ],
+                }
+            )
+        )
+    return organized
+
+
+def build_major_sections(
+    chapters: list[TimelineArtifact],
+    *,
+    video_id: UUID,
+    duration_ms: int,
+) -> list[TimelineArtifact]:
+    """按大节合并时间范围，关键帧只从大节中选择。"""
+    if not chapters:
+        return []
+    groups: dict[int, list[TimelineArtifact]] = {}
+    for chapter in chapters:
+        major_tag = next((tag for tag in chapter.tags if tag.startswith("major-section:")), None)
+        major_index = int(major_tag.split(":", 1)[1]) if major_tag else len(groups) + 1
+        groups.setdefault(major_index, []).append(chapter)
+    result: list[TimelineArtifact] = []
+    for major_index, items in sorted(groups.items()):
+        start = min(item.time_range.start_ms for item in items)
+        end = max(item.time_range.end_ms for item in items)
+        result.append(
+            TimelineArtifact(
+                video_id=video_id,
+                kind=TimelineKind.SEGMENT,
+                time_range=TimeRange(start_ms=start, end_ms=min(duration_ms, end)),
+                title=items[0].title,
+                text="；".join(item.title for item in items)[:300],
+                confidence=min(item.confidence for item in items),
+                observation_type=ObservationType.INFERENCE,
+                tags=[f"major-section:{major_index:02d}"],
+                provenance=Provenance(producer="hierarchical-chapter-organizer"),
+            )
+        )
     return result
 
 
@@ -1570,6 +1632,7 @@ class LocalProcessingManager:
                     except Exception as exc:
                         video.metadata["chapter_recovery_error"] = type(exc).__name__
                 if model_chapters:
+                    model_chapters = organize_hierarchical_chapters(model_chapters)
                     artifacts.extend(model_chapters)
                     video.metadata.pop("chapter_validation_error", None)
                 else:

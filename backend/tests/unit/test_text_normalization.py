@@ -217,10 +217,5 @@ def test_representative_frames_are_numbered_and_selected_by_chapter() -> None:
         duration_ms=240_000,
     )
 
-    assert [item.title for item in result] == [
-        "01-01｜第一节",
-        "01-02｜第一节",
-        "02-01｜第二节",
-        "02-02｜第二节",
-    ]
-    assert [item.time_range.start_ms for item in result] == [30_000, 90_000, 150_000, 210_000]
+    assert [item.title for item in result] == ["01｜第一节", "02｜第二节"]
+    assert [item.time_range.start_ms for item in result] == [60_000, 180_000]
