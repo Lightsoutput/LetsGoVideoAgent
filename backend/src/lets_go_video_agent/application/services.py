@@ -16,13 +16,17 @@ from lets_go_video_agent.agents.harness.engine import (
 from lets_go_video_agent.agents.harness.models import AgentRun, RunBudget, RunStatus
 from lets_go_video_agent.agents.roles.evidence_verifier import EvidenceVerifier
 from lets_go_video_agent.agents.roles.qa_investigator import QAInvestigator
-from lets_go_video_agent.application.errors import NotFoundError
+from lets_go_video_agent.application.errors import (
+    ExternalServiceUnavailableError,
+    NotFoundError,
+)
 from lets_go_video_agent.application.ports import (
     AnswerRepository,
     RunRepository,
     TimelineRepository,
     VideoRepository,
 )
+from lets_go_video_agent.domain.observability import TraceEventType
 from lets_go_video_agent.domain.qa import (
     Answer,
     AnswerStatus,
@@ -132,6 +136,11 @@ class QuestionService:
         self._default_budget = default_budget
         self._graph = build_qa_graph(investigator, verifier)
 
+    @property
+    def default_budget(self) -> RunBudget:
+        """向安全的运行状态 API 暴露只读副本，避免外部修改 Agent 策略。"""
+        return self._default_budget.model_copy(deep=True)
+
     async def ask(
         self,
         *,
@@ -139,16 +148,22 @@ class QuestionService:
         query: str,
         target: QuestionTarget | None = None,
         conversation_id: UUID | None = None,
+        use_web_search: bool = False,
     ) -> Answer:
         video = await self._videos.get(video_id)
         if video is None:
             raise NotFoundError(f"未找到视频: {video_id}")
+        if use_web_search and "search_web" not in self._harness.registry.names:
+            raise ExternalServiceUnavailableError(
+                "已要求联网回答，但 Search MCP 尚未启用或不可用"
+            )
 
         question = Question(
             video_id=video_id,
             conversation_id=conversation_id or uuid4(),
             query=query,
             target=target or GlobalTarget(),
+            use_web_search=use_web_search,
         )
         await self._answers.add_question(question)
 
@@ -160,9 +175,19 @@ class QuestionService:
             budget=self._default_budget.model_copy(deep=True),
         )
         await self._runs.add_run(run)
+        allowed_tools = set(self._investigator.allowed_tools) & set(
+            self._harness.registry.names
+        )
         session = self._harness.start_session(
             run=run,
-            allowed_tools=self._investigator.allowed_tools,
+            allowed_tools=allowed_tools,
+        )
+        await session.emit(
+            TraceEventType.AGENT_STARTED,
+            name=run.agent_name,
+            status=run.status.value,
+            summary="开始基于视频证据调查用户问题",
+            attributes={"phase": "入口", "node_id": "video_qa_graph"},
         )
 
         try:
@@ -204,9 +229,56 @@ class QuestionService:
             )
         except Exception as exc:
             session.complete(RunStatus.FAILED, type(exc).__name__)
+            await session.emit(
+                TraceEventType.AGENT_FAILED,
+                name=run.agent_name,
+                status=run.status.value,
+                summary=type(exc).__name__,
+            )
+            await session.emit(
+                TraceEventType.WORKFLOW_FAILED,
+                name="qa_workflow_result",
+                status=run.status.value,
+                summary=f"问答工作流异常结束：{type(exc).__name__}",
+                attributes={
+                    "phase": "完成",
+                    "node_id": "qa_workflow_result",
+                    "depends_on": ["video_qa_graph"],
+                },
+            )
             await self._runs.update_run(run)
             raise
 
+        await session.emit(
+            TraceEventType.AGENT_COMPLETED,
+            name=run.agent_name,
+            status=run.status.value,
+            summary=run.stop_reason or "Agent 运行结束",
+            attributes={
+                "phase": "完成",
+                "node_id": "video_qa_graph",
+                "depends_on": ["evidence_verifier"],
+            },
+        )
+        await session.emit(
+            (
+                TraceEventType.WORKFLOW_COMPLETED
+                if run.status in {RunStatus.COMPLETED, RunStatus.INSUFFICIENT_EVIDENCE}
+                else TraceEventType.WORKFLOW_FAILED
+            ),
+            name="qa_workflow_result",
+            status=run.status.value,
+            summary=(
+                "问答工作流已结束，回答和可回放证据已发布"
+                if run.status in {RunStatus.COMPLETED, RunStatus.INSUFFICIENT_EVIDENCE}
+                else f"问答工作流终止：{run.stop_reason or run.status.value}"
+            ),
+            attributes={
+                "phase": "完成",
+                "node_id": "qa_workflow_result",
+                "depends_on": ["evidence_verifier"],
+            },
+        )
         await self._answers.add_answer(answer)
         await self._runs.update_run(run)
         return answer

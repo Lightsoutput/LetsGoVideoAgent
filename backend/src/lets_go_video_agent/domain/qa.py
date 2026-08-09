@@ -54,7 +54,14 @@ class Question(DomainModel):
     query: str = Field(min_length=1, max_length=2_000)
     target: QuestionTarget = Field(default_factory=GlobalTarget)
     requested_evidence_types: list[EvidenceKind] = Field(default_factory=list)
+    use_web_search: bool = False
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class WebReference(DomainModel):
+    title: str = Field(min_length=1, max_length=500)
+    url: str = Field(min_length=8, max_length=2_048)
+    content: str = Field(default="", max_length=2_000)
 
 
 class AnswerStatus(StrEnum):
@@ -79,6 +86,8 @@ class Answer(DomainModel):
     evidence: list[Evidence] = Field(default_factory=list)
     confidence: float = Field(default=0, ge=0, le=1)
     limitations: list[str] = Field(default_factory=list)
+    web_search_performed: bool = False
+    web_sources: list[WebReference] = Field(default_factory=list)
     trace_id: UUID
     usage: ModelUsage = Field(default_factory=ModelUsage)
     created_at: datetime = Field(default_factory=utc_now)

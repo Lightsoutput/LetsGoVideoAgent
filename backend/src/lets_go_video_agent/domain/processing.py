@@ -21,6 +21,7 @@ class ProcessingRun(DomainModel):
 
     id: UUID = Field(default_factory=uuid4)
     video_id: UUID
+    trace_id: UUID = Field(default_factory=uuid4)
     status: ProcessingStatus = ProcessingStatus.QUEUED
     stage: str = "queued"
     stage_label: str = "等待处理"
@@ -29,6 +30,7 @@ class ProcessingRun(DomainModel):
     eta_seconds: float | None = Field(default=None, ge=0)
     message: str = "任务已进入队列"
     error: str | None = None
+    attempt_count: int = Field(default=0, ge=0)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)

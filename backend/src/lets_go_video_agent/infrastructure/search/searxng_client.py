@@ -10,6 +10,18 @@ class SearxngClient:
         self._api_base = api_base.rstrip("/")
         self._timeout = timeout_seconds
 
+    async def health(self) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=min(self._timeout, 3)) as client:
+                response = await client.get(
+                    f"{self._api_base}/search",
+                    params={"q": "health", "format": "json"},
+                )
+            response.raise_for_status()
+            return isinstance(response.json(), dict)
+        except (httpx.HTTPError, ValueError, TypeError):
+            return False
+
     async def search(
         self, query: str, *, limit: int = 5, language: str = "zh-CN"
     ) -> list[dict[str, str]]:

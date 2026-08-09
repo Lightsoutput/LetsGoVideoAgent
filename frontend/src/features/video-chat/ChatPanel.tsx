@@ -19,6 +19,8 @@ interface ChatPanelProps {
   currentTimeMs: number;
   activeRange: TimeRange | null;
   onSeek(timestampMs: number): void;
+  onAnswer?(answer: Answer): void;
+  onOpenTrace?(traceId: string): void;
 }
 
 interface ConversationTurn {
@@ -27,6 +29,7 @@ interface ConversationTurn {
   answer?: Answer;
   status: "pending" | "completed" | "failed";
   error?: string;
+  useWebSearch: boolean;
 }
 
 const QUICK_QUESTIONS = [
@@ -72,11 +75,14 @@ export function ChatPanel({
   currentTimeMs,
   activeRange,
   onSeek,
+  onAnswer,
+  onOpenTrace,
 }: ChatPanelProps) {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<ScopeMode>("global");
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [busy, setBusy] = useState(false);
+  const [useWebSearch, setUseWebSearch] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const overview = preparedOverview(video);
 
@@ -107,6 +113,7 @@ export function ChatPanel({
     event.preventDefault();
     if (!video || !query.trim() || busy) return;
     const submittedQuery = query.trim();
+    const submittedUseWebSearch = useWebSearch;
     const turnId = crypto.randomUUID();
     setQuery("");
     setBusy(true);
@@ -114,10 +121,21 @@ export function ChatPanel({
     // 先把用户消息放进对话区；网络请求在其后进行，长时间思考时用户也能确认已发送。
     setTurns((items) => [
       ...items,
-      { id: turnId, question: submittedQuery, status: "pending" },
+      {
+        id: turnId,
+        question: submittedQuery,
+        status: "pending",
+        useWebSearch: submittedUseWebSearch,
+      },
     ]);
     try {
-      const answer = await askVideo(video.id, submittedQuery, buildTarget());
+      const answer = await askVideo(
+        video.id,
+        submittedQuery,
+        buildTarget(),
+        submittedUseWebSearch,
+      );
+      onAnswer?.(answer);
       setTurns((items) =>
         items.map((item) =>
           item.id === turnId ? { ...item, answer, status: "completed" } : item,
@@ -223,11 +241,14 @@ export function ChatPanel({
           </div>
         )}
 
-        {turns.map(({ id, question, answer, status, error: turnError }) => {
+        {turns.map(({ id, question, answer, status, error: turnError, useWebSearch: turnUsesWeb }) => {
           if (!answer) {
             return (
               <div className="conversation-turn" key={id}>
-                <div className="user-message">{question}</div>
+                <div className="user-message">
+                  {turnUsesWeb && <small>🌐 强制联网</small>}
+                  {question}
+                </div>
                 {status === "pending" ? (
                   <div className="agent-thinking turn-thinking">
                     <i />
@@ -244,7 +265,10 @@ export function ChatPanel({
           const citations = uniqueCitations(answer);
           return (
           <div className="conversation-turn" key={id}>
-            <div className="user-message">{question}</div>
+            <div className="user-message">
+              {turnUsesWeb && <small>🌐 已联网补充</small>}
+              {question}
+            </div>
             <div className="agent-message">
               <div className="answer-header">
                 <span className={`answer-status status-${answer.status}`}>
@@ -280,11 +304,30 @@ export function ChatPanel({
                   </ul>
                 </details>
               )}
+              {answer.web_search_performed && (
+                <details className="web-sources" open={answer.web_sources.length > 0}>
+                  <summary>联网补充来源 · {answer.web_sources.length}</summary>
+                  {answer.web_sources.map((source) => (
+                    <a href={source.url} key={source.url} rel="noreferrer" target="_blank">
+                      <strong>{source.title}</strong>
+                      <span>{source.content || source.url}</span>
+                    </a>
+                  ))}
+                  {answer.web_sources.length === 0 && <p>已执行搜索，但没有返回可用来源。</p>}
+                </details>
+              )}
               <div className="answer-meta">
                 <span>{answer.usage.tool_calls} 次工具调用</span>
                 <span>{answer.usage.elapsed_ms} ms</span>
                 <span>{formatCost(answer.usage.estimated_cost_usd)}</span>
-                <span title={answer.trace_id}>Trace {answer.trace_id.slice(0, 8)}</span>
+                <button
+                  className="answer-trace-button"
+                  onClick={() => onOpenTrace?.(answer.trace_id)}
+                  title={answer.trace_id}
+                  type="button"
+                >
+                  查看 Trace {answer.trace_id.slice(0, 8)}
+                </button>
               </div>
             </div>
           </div>
@@ -307,6 +350,16 @@ export function ChatPanel({
           rows={3}
           value={query}
         />
+        <label className={`web-search-toggle ${useWebSearch ? "active" : ""}`}>
+          <input
+            checked={useWebSearch}
+            disabled={!video || busy}
+            onChange={(event) => setUseWebSearch(event.target.checked)}
+            type="checkbox"
+          />
+          <span>联网补充回答</span>
+          <small>勾选后本次问答一定调用 Search MCP，并展示来源</small>
+        </label>
         <div className="composer-footer">
           <span>回答将附带时间戳和视频内证据</span>
           <button disabled={!video || !query.trim() || busy} type="submit">

@@ -4,6 +4,10 @@ import type {
   TimelineArtifact,
   Video,
   ProcessingRun,
+  AgentRun,
+  SystemObservability,
+  TraceEvent,
+  UsageSummary,
 } from "@/lib/api/types";
 
 export const API_BASE =
@@ -62,10 +66,11 @@ export async function askVideo(
   videoId: string,
   query: string,
   target: QuestionTarget,
+  useWebSearch = false,
 ): Promise<Answer> {
   return request<Answer>(`/videos/${videoId}/questions`, {
     method: "POST",
-    body: JSON.stringify({ query, target }),
+    body: JSON.stringify({ query, target, use_web_search: useWebSearch }),
   });
 }
 
@@ -100,6 +105,25 @@ export async function getProcessing(videoId: string): Promise<ProcessingRun> {
 
 export async function startProcessing(videoId: string): Promise<ProcessingRun> {
   return request<ProcessingRun>(`/videos/${videoId}/processing`, { method: "POST" });
+}
+
+export async function getAgentTrace(traceId: string): Promise<TraceEvent[]> {
+  // 统一 Trace 端点同时支持问答 AgentRun 与上传后的视频处理工作流。
+  const data = await request<{ items: TraceEvent[] }>(`/traces/${traceId}`);
+  return data.items;
+}
+
+export async function getAgentRun(traceId: string): Promise<AgentRun> {
+  return request<AgentRun>(`/agent-runs/${traceId}`);
+}
+
+export async function getUsageSummary(videoId?: string): Promise<UsageSummary> {
+  const query = videoId ? `?video_id=${encodeURIComponent(videoId)}` : "";
+  return request<UsageSummary>(`/observability/usage${query}`);
+}
+
+export async function getSystemObservability(): Promise<SystemObservability> {
+  return request<SystemObservability>("/observability/system");
 }
 
 export function resolveAssetUrl(url: string | null): string | null {

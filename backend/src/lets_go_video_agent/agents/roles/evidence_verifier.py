@@ -95,6 +95,8 @@ class EvidenceVerifier:
             ],
             confidence=confidence,
             limitations=[*draft.limitations, *issues],
+            web_search_performed=draft.web_search_performed,
+            web_sources=draft.web_sources,
             trace_id=trace_id,
             usage=usage,
         )

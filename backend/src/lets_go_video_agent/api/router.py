@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from decimal import Decimal
 from html import escape
 from pathlib import Path
 from typing import Annotated
@@ -13,8 +15,16 @@ from lets_go_video_agent.agents.harness.models import AgentRun
 from lets_go_video_agent.api.dependencies import get_container
 from lets_go_video_agent.api.schemas import (
     AskQuestionRequest,
+    HarnessPolicyResponse,
     HealthResponse,
+    McpStatusResponse,
+    ModelRouteResponse,
+    NarrativeContextResponse,
+    SemanticEventsResponse,
+    SystemObservabilityResponse,
     TimelineResponse,
+    TraceEventsResponse,
+    UsageEventsResponse,
     VideoListResponse,
     WebImportRequest,
 )
@@ -124,6 +134,8 @@ async def get_processing(
 ) -> ProcessingRun:
     run = container.processing.get(video_id)
     if run is None:
+        run = await container.store.get_processing_run(video_id)
+    if run is None:
         raise HTTPException(status_code=404, detail="该视频还没有处理任务")
     return run
 
@@ -133,6 +145,93 @@ async def get_cost_summary(
     container: Annotated[Container, Depends(get_container)],
 ) -> dict[str, object]:
     return container.cost_ledger.summary()
+
+
+@router.get("/observability/usage", response_model=UsageEventsResponse, tags=["observability"])
+async def get_usage_events(
+    container: Annotated[Container, Depends(get_container)],
+    video_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
+) -> UsageEventsResponse:
+    """返回统一用量事件，供成本中心按服务商和模型聚合展示。"""
+
+    all_items = list(await container.store.list_usage_events(video_id))
+    items = all_items[-limit:]
+    by_provider: dict[str, Decimal] = {}
+    by_model: dict[str, Decimal] = {}
+    for item in all_items:
+        by_provider[item.provider] = by_provider.get(item.provider, Decimal()) + item.cost_cny
+        by_model[item.model] = by_model.get(item.model, Decimal()) + item.cost_cny
+    return UsageEventsResponse(
+        items=items,
+        call_count=len(all_items),
+        total_input_tokens=sum(item.input_tokens for item in all_items),
+        total_output_tokens=sum(item.output_tokens for item in all_items),
+        total_cost_cny=sum((item.cost_cny for item in all_items), Decimal()),
+        cost_by_provider=by_provider,
+        cost_by_model=by_model,
+    )
+
+
+@router.get(
+    "/observability/system",
+    response_model=SystemObservabilityResponse,
+    tags=["observability"],
+)
+async def get_observability_system(
+    container: Annotated[Container, Depends(get_container)],
+) -> SystemObservabilityResponse:
+    """公开安全的运行配置，不返回 API Key、Prompt 或代理凭据。"""
+
+    settings = container.settings
+    budget = container.questions.default_budget
+    if container.search is None:
+        mcp_status = "disabled"
+    else:
+        try:
+            healthy = await asyncio.wait_for(container.search.health(), timeout=4)
+            mcp_status = "ready" if healthy else "unavailable"
+        except TimeoutError:
+            mcp_status = "unavailable"
+    return SystemObservabilityResponse(
+        harness=HarnessPolicyResponse(
+            max_steps=budget.max_steps,
+            max_model_calls=budget.max_model_calls,
+            max_tool_calls=budget.max_tool_calls,
+            max_tokens=budget.max_tokens,
+            max_cost_usd=budget.max_cost_usd,
+            deadline_seconds=budget.deadline_seconds,
+            max_repeated_tool_call=budget.max_repeated_tool_call,
+            registered_tools=sorted(container.harness.registry.names),
+        ),
+        mcp=McpStatusResponse(
+            provider=settings.search_provider,
+            status=mcp_status,
+            endpoint=(settings.search_mcp_url if settings.search_provider == "mcp" else None),
+            tools=(
+                ["search_web", "verify_terms", "search_health"]
+                if settings.search_provider == "mcp"
+                else []
+            ),
+        ),
+        models=[
+            ModelRouteResponse(
+                capability="text_reasoning",
+                provider=settings.llm_provider,
+                model=settings.llm_model,
+                configured=settings.llm_provider == "mock" or bool(settings.llm_api_key),
+            ),
+            ModelRouteResponse(
+                capability="visual_understanding",
+                provider=settings.vlm_provider,
+                model=settings.vlm_model,
+                configured=settings.vlm_provider in {"mock", "ollama"}
+                or bool(settings.vlm_api_key),
+            ),
+        ],
+        repository=settings.repository_backend,
+        workflow=settings.workflow_backend,
+    )
 
 
 @router.get("/videos/{video_id}/frames/{filename}", include_in_schema=False)
@@ -209,6 +308,34 @@ async def get_timeline(
     return TimelineResponse(video_id=video_id, items=items)
 
 
+@router.get(
+    "/videos/{video_id}/semantic-events",
+    response_model=SemanticEventsResponse,
+    tags=["understanding"],
+)
+async def get_semantic_events(
+    video_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> SemanticEventsResponse:
+    await container.videos.get_video(video_id)
+    items = list(await container.store.list_semantic_events(video_id))
+    return SemanticEventsResponse(video_id=video_id, items=items)
+
+
+@router.get(
+    "/videos/{video_id}/narrative-context",
+    response_model=NarrativeContextResponse,
+    tags=["understanding"],
+)
+async def get_narrative_context(
+    video_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> NarrativeContextResponse:
+    await container.videos.get_video(video_id)
+    context = await container.store.get_narrative_context(video_id)
+    return NarrativeContextResponse(video_id=video_id, context=context)
+
+
 @router.post(
     "/videos/{video_id}/questions",
     response_model=Answer,
@@ -224,6 +351,7 @@ async def ask_video(
         query=payload.query,
         target=payload.target,
         conversation_id=payload.conversation_id,
+        use_web_search=payload.use_web_search,
     )
 
 
@@ -239,6 +367,38 @@ async def get_agent_run(
 
         raise NotFoundError(f"未找到 Agent Run: {run_id}")
     return AgentRun.model_validate(run)
+
+
+@router.get(
+    "/agent-runs/{run_id}/trace",
+    response_model=TraceEventsResponse,
+    tags=["observability"],
+)
+async def get_agent_trace(
+    run_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> TraceEventsResponse:
+    run = await container.store.get_run(run_id)
+    if run is None:
+        from lets_go_video_agent.application.errors import NotFoundError
+
+        raise NotFoundError(f"未找到 Agent Run: {run_id}")
+    items = list(await container.store.list_trace_events(run_id))
+    return TraceEventsResponse(trace_id=run_id, items=items)
+
+
+@router.get(
+    "/traces/{trace_id}",
+    response_model=TraceEventsResponse,
+    tags=["observability"],
+)
+async def get_trace(
+    trace_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> TraceEventsResponse:
+    """读取问答或视频处理 Trace，不要求它必须对应 AgentRun。"""
+    items = list(await container.store.list_trace_events(trace_id))
+    return TraceEventsResponse(trace_id=trace_id, items=items)
 
 
 @router.get("/demo/frames/{timestamp_ms}.svg", include_in_schema=False)

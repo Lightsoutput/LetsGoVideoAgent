@@ -15,6 +15,9 @@ def client(tmp_path) -> Iterator[TestClient]:
         local_data_dir=tmp_path / "data",
         llm_provider="mock",
         llm_api_key=None,
+        vlm_provider="mock",
+        vlm_api_key=None,
+        search_provider="disabled",
         enable_remote_downloads=False,
     )
     with TestClient(create_app(settings=settings)) as test_client:

@@ -19,3 +19,8 @@ export function formatCost(cost: string): string {
   return `$${value.toFixed(4)}`;
 }
 
+export function formatCny(cost: string | number): string {
+  const value = Number(cost);
+  if (!Number.isFinite(value) || value === 0) return "¥0.000000";
+  return `¥${value.toFixed(value < 0.01 ? 6 : 4)}`;
+}

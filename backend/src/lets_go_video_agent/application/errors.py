@@ -16,3 +16,8 @@ class UnsafeSourceUrlError(ApplicationError):
 class UnsupportedMediaError(ApplicationError):
     code = "unsupported_media"
     status_code = 415
+
+
+class ExternalServiceUnavailableError(ApplicationError):
+    code = "external_service_unavailable"
+    status_code = 503

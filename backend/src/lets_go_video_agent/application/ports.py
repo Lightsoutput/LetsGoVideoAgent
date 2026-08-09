@@ -4,7 +4,10 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
+from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
+from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer, Question, QuestionTarget
+from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
 from lets_go_video_agent.domain.timeline import Evidence, TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 
@@ -56,6 +59,16 @@ class FrameInspectionPort(Protocol):
     ) -> Sequence[Evidence]: ...
 
 
+class WebSearchPort(Protocol):
+    """联网搜索的最小能力契约；具体实现可以是 MCP 或 SearXNG。"""
+
+    async def health(self) -> bool: ...
+
+    async def search(
+        self, query: str, *, limit: int = 5, language: str = "zh-CN"
+    ) -> list[dict[str, str]]: ...
+
+
 class RunRecord(Protocol):
     id: UUID
 
@@ -68,11 +81,42 @@ class RunRepository(Protocol):
     async def get_run(self, run_id: UUID) -> RunRecord | None: ...
 
 
+class ProcessingRunRepository(Protocol):
+    async def upsert_processing_run(self, run: ProcessingRun) -> None: ...
+
+    async def get_processing_run(self, video_id: UUID) -> ProcessingRun | None: ...
+
+
+class SemanticRepository(Protocol):
+    async def replace_semantic_events(
+        self, video_id: UUID, events: Sequence[SemanticEvent]
+    ) -> None: ...
+
+    async def list_semantic_events(self, video_id: UUID) -> Sequence[SemanticEvent]: ...
+
+    async def upsert_narrative_context(self, context: NarrativeContext) -> None: ...
+
+    async def get_narrative_context(self, video_id: UUID) -> NarrativeContext | None: ...
+
+
+class ObservabilityRepository(Protocol):
+    async def append_trace_event(self, event: TraceEvent) -> None: ...
+
+    async def list_trace_events(self, trace_id: UUID) -> Sequence[TraceEvent]: ...
+
+    async def append_usage_event(self, event: UsageEvent) -> None: ...
+
+    async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]: ...
+
+
 class AppStore(
     VideoRepository,
     TimelineRepository,
     AnswerRepository,
     RunRepository,
+    ProcessingRunRepository,
+    SemanticRepository,
+    ObservabilityRepository,
     Protocol,
 ):
     """应用使用的组合仓库契约，memory 与 mysql 必须具有相同语义。"""

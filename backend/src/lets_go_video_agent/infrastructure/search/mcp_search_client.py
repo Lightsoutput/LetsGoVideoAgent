@@ -12,6 +12,21 @@ class McpSearchClient:
     def __init__(self, *, url: str) -> None:
         self._url = url
 
+    async def health(self) -> bool:
+        """通过 MCP 工具检查服务与下游 SearXNG，不绕过协议直连内部地址。"""
+        try:
+            async with streamable_http_client(self._url) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool("search_health", arguments={})
+        except Exception:
+            return False
+        structured = result.structuredContent
+        if not isinstance(structured, dict):
+            return False
+        payload: Any = structured.get("result", structured)
+        return isinstance(payload, dict) and payload.get("mcp") == "ready"
+
     async def search(
         self, query: str, *, limit: int = 5, language: str = "zh-CN"
     ) -> list[dict[str, str]]:

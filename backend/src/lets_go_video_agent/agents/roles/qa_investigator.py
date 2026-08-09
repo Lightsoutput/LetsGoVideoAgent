@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from decimal import Decimal
 from typing import Any
@@ -7,13 +8,15 @@ from typing import Any
 from pydantic import Field
 
 from lets_go_video_agent.agents.harness.engine import HarnessSession
-from lets_go_video_agent.agents.tools.video_tools import EvidenceBatch
+from lets_go_video_agent.agents.tools.video_tools import EvidenceBatch, WebSearchBatch
 from lets_go_video_agent.domain.common import DomainModel
+from lets_go_video_agent.domain.observability import TraceEventType
 from lets_go_video_agent.domain.qa import (
     EvidenceCitation,
     FrameTarget,
     MomentTarget,
     Question,
+    WebReference,
 )
 from lets_go_video_agent.domain.timeline import Evidence, EvidenceKind
 from lets_go_video_agent.infrastructure.models.deepseek_client import DeepSeekClient
@@ -25,6 +28,8 @@ class DraftAnswer(DomainModel):
     evidence: list[Evidence] = Field(default_factory=list)
     confidence: float = Field(default=0, ge=0, le=1)
     limitations: list[str] = Field(default_factory=list)
+    web_search_performed: bool = False
+    web_sources: list[WebReference] = Field(default_factory=list)
 
 
 def _format_timestamp(timestamp_ms: int) -> str:
@@ -41,7 +46,7 @@ class QAInvestigator:
 
     name = "qa_investigator"
     version = "0.1.0"
-    allowed_tools = frozenset({"search_timeline", "inspect_frame"})
+    allowed_tools = frozenset({"search_timeline", "inspect_frame", "search_web"})
 
     def __init__(self, llm: DeepSeekClient | None = None) -> None:
         self._llm = llm
@@ -55,28 +60,44 @@ class QAInvestigator:
     ) -> DraftAnswer:
         summary_question = question.target.kind == "global" and _is_summary_query(question.query)
         search_limit = max(limit, 16) if summary_question else limit
-        search_result = await session.invoke_tool(
-            "search_timeline",
-            {
-                "video_id": str(question.video_id),
-                "query": question.query,
-                "target": question.target.model_dump(mode="json"),
-                "limit": search_limit,
-            },
+        # 视频检索、精确帧检查和联网补充彼此独立，通过 Harness 并行执行。
+        timeline_task = asyncio.create_task(
+            session.invoke_tool(
+                "search_timeline",
+                {
+                    "video_id": str(question.video_id),
+                    "query": question.query,
+                    "target": question.target.model_dump(mode="json"),
+                    "limit": search_limit,
+                },
+            )
         )
+        frame_task = (
+            asyncio.create_task(
+                session.invoke_tool(
+                    "inspect_frame",
+                    {
+                        "video_id": str(question.video_id),
+                        "timestamp_ms": question.target.timestamp_ms,
+                        "query": question.query,
+                    },
+                )
+            )
+            if isinstance(question.target, (FrameTarget, MomentTarget))
+            else None
+        )
+        web_task = (
+            asyncio.create_task(self._search_web(question=question, session=session))
+            if question.use_web_search
+            else None
+        )
+        search_result = await timeline_task
         evidence = list(EvidenceBatch.model_validate(search_result).items)
 
         # “当前帧”和“这一刻”不是同一回事，但二者都需要画面证据。Moment 会同时
         # 保留邻域字幕；Frame 则把视觉/OCR 证据放在更高优先级。
-        if isinstance(question.target, (FrameTarget, MomentTarget)):
-            frame_result = await session.invoke_tool(
-                "inspect_frame",
-                {
-                    "video_id": str(question.video_id),
-                    "timestamp_ms": question.target.timestamp_ms,
-                    "query": question.query,
-                },
-            )
+        if frame_task is not None:
+            frame_result = await frame_task
             frame_evidence = list(EvidenceBatch.model_validate(frame_result).items)
             if isinstance(question.target, FrameTarget):
                 # 当前帧问题优先使用即时抽帧；普通检索只补充声音/章节上下文，避免
@@ -90,24 +111,112 @@ class QAInvestigator:
             else:
                 evidence.extend(frame_evidence)
 
+        web_sources = await web_task if web_task is not None else []
+
         evidence = self._deduplicate(evidence)[:search_limit]
+        composer_name = self._llm.model if self._llm else "deterministic-evidence-composer"
         await session.reserve_model_call(
             estimated_input_tokens=max(100, sum(len(item.description) for item in evidence) // 2),
             estimated_output_tokens=1400 if summary_question else 700,
             estimated_cost_usd=Decimal("0"),
-            model_name="mock-evidence-composer",
+            model_name=composer_name,
         )
         if self._llm and evidence:
-            return await self._compose_with_llm(question, evidence, summary_question)
-        return self._compose(question, evidence)
+            draft = await self._compose_with_llm(
+                question, evidence, summary_question, web_sources
+            )
+        else:
+            draft = self._compose(question, evidence, web_sources)
+        await session.emit(
+            TraceEventType.MODEL_COMPLETED,
+            name=composer_name,
+            status="completed",
+            summary="已生成带证据映射的回答草稿",
+            attributes={"evidence_count": len(draft.evidence)},
+        )
+        return draft
+
+    async def _search_web(
+        self, *, question: Question, session: HarnessSession
+    ) -> list[WebReference]:
+        """强制联网分支：只要用户勾选，就一定产生 MCP 调用或明确失败。"""
+        graph_attributes: dict[str, object] = {
+            "phase": "并行检索",
+            "node_id": "web_research_agent",
+            "depends_on": ["video_qa_graph"],
+            "parallel_group": "qa_retrieval",
+        }
+        await session.emit(
+            TraceEventType.AGENT_STARTED,
+            name="web_research_agent",
+            status="running",
+            summary="用户已启用联网补充，开始通过 MCP 搜索外部背景资料",
+            attributes=graph_attributes,
+        )
+        await session.emit(
+            TraceEventType.MCP_CALLED,
+            name="search_web",
+            status="running",
+            summary="向 Search MCP 提交用户问题",
+            attributes={**graph_attributes, "query": question.query[:160]},
+        )
+        try:
+            result = WebSearchBatch.model_validate(
+                await session.invoke_tool(
+                    "search_web",
+                    {"query": question.query, "limit": 5, "language": "zh-CN"},
+                )
+            )
+        except Exception as exc:
+            await session.emit(
+                TraceEventType.MCP_RETURNED,
+                name="search_web",
+                status="failed",
+                summary=f"联网搜索失败：{type(exc).__name__}",
+                attributes=graph_attributes,
+            )
+            await session.emit(
+                TraceEventType.AGENT_FAILED,
+                name="web_research_agent",
+                status="failed",
+                summary="联网补充分支未取得可用来源",
+                attributes=graph_attributes,
+            )
+            return []
+        status = "completed" if result.available else "failed"
+        await session.emit(
+            TraceEventType.MCP_RETURNED,
+            name="search_web",
+            status=status,
+            summary=(
+                f"联网搜索返回 {len(result.items)} 条来源"
+                if result.available
+                else "Search MCP 或下游搜索服务不可用"
+            ),
+            attributes={**graph_attributes, "result_count": len(result.items)},
+        )
+        await session.emit(
+            TraceEventType.AGENT_COMPLETED,
+            name="web_research_agent",
+            status=status,
+            summary=f"联网补充分支结束，共 {len(result.items)} 条来源",
+            attributes=graph_attributes,
+        )
+        if not result.available:
+            return []
+        return [WebReference.model_validate(item.model_dump()) for item in result.items]
 
     async def _compose_with_llm(
-        self, question: Question, evidence: list[Evidence], summary_question: bool
+        self,
+        question: Question,
+        evidence: list[Evidence],
+        summary_question: bool,
+        web_sources: list[WebReference],
     ) -> DraftAnswer:
         """LLM 只能组织已检索证据；引用仍由代码映射，不能让模型伪造 ID。"""
         llm = self._llm
         if llm is None:
-            return self._compose(question, evidence)
+            return self._compose(question, evidence, web_sources)
         # OCR 可能包含整页课件。限制单条长度并标明证据类型，避免模型退化成逐字复读器。
         evidence_clip = 2_800 if summary_question else 1_200
         evidence_text = "\n".join(
@@ -118,6 +227,10 @@ class QAInvestigator:
             )
             for index, item in enumerate(evidence)
         )
+        web_text = "\n".join(
+            f"[W{index}] {item.title} | {item.content[:900]} | {item.url}"
+            for index, item in enumerate(web_sources)
+        ) or "未启用联网补充"
         summary_rules = (
             "这是全片总结任务。必须覆盖视频开头、中段、后段；先说明视频对象与核心目的，再按内容结构"
             "列出关键主题或建议并解释其含义。若视频声称有固定数量的要点（例如7条），应尽量逐项还原，"
@@ -136,6 +249,8 @@ class QAInvestigator:
                 "不要逐条照抄字幕或整页 OCR，不要说‘根据证据1’，不要为了显得完整重复相同信息。"
                 "画面问题要区分‘屏幕上写了什么’与‘这些内容表达什么’；整体问题要归纳主题、结构和"
                 "逻辑关系。证据不足时明确说明边界，不得用常识冒充视频内容。"
+                "联网资料只能补充视频中缺失的背景、术语和时效信息，必须明确区分‘视频所述’与"
+                "‘联网补充’，不得让网页内容覆盖视频直接证据。"
                 f"{summary_rules}"
                 "输出 JSON：text、citation_indices（真正支持结论的整数编号数组）、"
                 "confidence（0到1）、limitations（字符串数组）。"
@@ -144,6 +259,7 @@ class QAInvestigator:
                 f"用户问题：{question.query}\n"
                 f"问题范围：{question.target.kind}\n"
                 f"视频证据：\n{evidence_text}\n"
+                f"联网补充资料：\n{web_text}\n"
                 "请像一个真正看过视频的人一样回答，保持简洁但有信息密度。"
             ),
             purpose="video_question_answer",
@@ -154,7 +270,7 @@ class QAInvestigator:
             reasoning_effort="high",
         )
         if result is None:
-            draft = self._compose(question, evidence)
+            draft = self._compose(question, evidence, web_sources)
             draft.limitations.append("大模型回答超时，已使用全片证据生成保底回答。")
             return draft
         indices = [
@@ -191,7 +307,14 @@ class QAInvestigator:
             evidence=cited,
             confidence=max(0, min(1, float(result.get("confidence", 0.5)))),
             limitations=[str(item) for item in result.get("limitations", [])]
-            + (["深度思考超时，已使用同一份全片证据重新组织答案。"] if fallback_used else []),
+            + (["深度思考超时，已使用同一份全片证据重新组织答案。"] if fallback_used else [])
+            + (
+                ["已执行联网检索，但没有取得可用的外部来源。"]
+                if question.use_web_search and not web_sources
+                else []
+            ),
+            web_search_performed=question.use_web_search,
+            web_sources=web_sources,
         )
 
     async def _complete_with_retry(
@@ -209,11 +332,26 @@ class QAInvestigator:
             except Exception:
                 return None, True
 
-    def _compose(self, question: Question, evidence: list[Evidence]) -> DraftAnswer:
+    def _compose(
+        self,
+        question: Question,
+        evidence: list[Evidence],
+        web_sources: list[WebReference] | None = None,
+    ) -> DraftAnswer:
+        web_sources = web_sources or []
         if not evidence:
             return DraftAnswer(
                 text="目前没有检索到足以回答这个问题的视频内证据。",
-                limitations=["可能尚未完成对应时间段的字幕、OCR 或视觉索引。"],
+                limitations=[
+                    "可能尚未完成对应时间段的字幕、OCR 或视觉索引。",
+                    *(
+                        ["已执行联网检索，但没有取得可用的外部来源。"]
+                        if question.use_web_search and not web_sources
+                        else []
+                    ),
+                ],
+                web_search_performed=question.use_web_search,
+                web_sources=web_sources,
             )
 
         prefix = {
@@ -264,7 +402,14 @@ class QAInvestigator:
                 ["这是离线演示模型生成的结构化回答；接入真实模型后仍受同一证据约束。"]
                 if all(item.provenance.model is None for item in evidence)
                 else []
+            )
+            + (
+                ["已执行联网检索，但没有取得可用的外部来源。"]
+                if question.use_web_search and not web_sources
+                else []
             ),
+            web_search_performed=question.use_web_search,
+            web_sources=web_sources,
         )
 
     @staticmethod

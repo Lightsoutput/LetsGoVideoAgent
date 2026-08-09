@@ -50,6 +50,7 @@ export interface Video {
 export interface ProcessingRun {
   id: string;
   video_id: string;
+  trace_id: string;
   status: "queued" | "running" | "completed" | "failed";
   stage: string;
   stage_label: string;
@@ -58,6 +59,7 @@ export interface ProcessingRun {
   eta_seconds: number | null;
   message: string;
   error: string | null;
+  attempt_count: number;
 }
 
 export type TimelineKind =
@@ -133,7 +135,133 @@ export interface Answer {
   evidence: Evidence[];
   confidence: number;
   limitations: string[];
+  web_search_performed: boolean;
+  web_sources: Array<{
+    title: string;
+    url: string;
+    content: string;
+  }>;
   trace_id: string;
   usage: ModelUsage;
   created_at: string;
+}
+
+export interface TraceEvent {
+  id: string;
+  trace_id: string;
+  sequence: number;
+  event_type:
+    | "agent.started"
+    | "agent.completed"
+    | "agent.failed"
+    | "model.requested"
+    | "model.completed"
+    | "tool.called"
+    | "tool.returned"
+    | "mcp.called"
+    | "mcp.returned"
+    | "skill.loaded"
+    | "skill.validated"
+    | "budget.updated"
+    | "human.approved"
+    | "human.rejected"
+    | "workflow.started"
+    | "workflow.completed"
+    | "workflow.failed";
+  name: string;
+  status: string | null;
+  summary: string;
+  video_id: string | null;
+  task_id: string | null;
+  agent_id: string | null;
+  parent_event_id: string | null;
+  attributes: Record<string, unknown>;
+  occurred_at: string;
+}
+
+export interface UsageEvent {
+  id: string;
+  provider: string;
+  model: string;
+  purpose: string;
+  input_tokens: number;
+  output_tokens: number;
+  image_count: number;
+  request_count: number;
+  original_currency: string;
+  original_cost: string;
+  cost_cny: string;
+  cache_hit: boolean;
+  retry: boolean;
+  status: string;
+  pricing_version: string | null;
+  trace_id: string | null;
+  task_id: string | null;
+  video_id: string | null;
+  agent_id: string | null;
+  occurred_at: string;
+}
+
+export interface UsageSummary {
+  items: UsageEvent[];
+  call_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_cny: string;
+  cost_by_provider: Record<string, string>;
+  cost_by_model: Record<string, string>;
+}
+
+export interface HarnessPolicy {
+  max_steps: number;
+  max_model_calls: number;
+  max_tool_calls: number;
+  max_tokens: number;
+  max_cost_usd: string;
+  deadline_seconds: number;
+  max_repeated_tool_call: number;
+  registered_tools: string[];
+}
+
+export interface AgentStep {
+  index: number;
+  kind: string;
+  name: string;
+  status: string;
+  summary: string;
+  elapsed_ms: number;
+  created_at: string;
+}
+
+export interface AgentRun {
+  id: string;
+  agent_name: string;
+  agent_version: string;
+  video_id: string;
+  conversation_id: string;
+  status: string;
+  budget: Omit<HarnessPolicy, "registered_tools">;
+  usage: ModelUsage;
+  steps: AgentStep[];
+  stop_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface SystemObservability {
+  harness: HarnessPolicy;
+  mcp: {
+    provider: string;
+    status: string;
+    endpoint: string | null;
+    tools: string[];
+  };
+  models: Array<{
+    capability: string;
+    provider: string;
+    model: string;
+    configured: boolean;
+  }>;
+  repository: string;
+  workflow: string;
 }

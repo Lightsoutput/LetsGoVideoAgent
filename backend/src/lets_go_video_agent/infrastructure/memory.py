@@ -8,6 +8,8 @@ from uuid import UUID
 
 from lets_go_video_agent.application.ports import RunRecord, TimelineRepository
 from lets_go_video_agent.domain.common import Provenance, TimeRange
+from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
+from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import (
     Answer,
     FrameTarget,
@@ -17,6 +19,7 @@ from lets_go_video_agent.domain.qa import (
     QuestionTarget,
     RangeTarget,
 )
+from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
 from lets_go_video_agent.domain.timeline import (
     Evidence,
     EvidenceKind,
@@ -39,6 +42,11 @@ class InMemoryStore:
         self.questions: dict[UUID, Question] = {}
         self.answers: dict[UUID, Answer] = {}
         self.runs: dict[UUID, RunRecord] = {}
+        self.processing_runs: dict[UUID, ProcessingRun] = {}
+        self.semantic_events: dict[UUID, list[SemanticEvent]] = {}
+        self.narrative_contexts: dict[UUID, NarrativeContext] = {}
+        self.trace_events: dict[UUID, list[TraceEvent]] = {}
+        self.usage_events: list[UsageEvent] = []
         self._lock = asyncio.Lock()
 
     async def add(self, video: Video) -> None:
@@ -97,6 +105,55 @@ class InMemoryStore:
 
     async def get_run(self, run_id: UUID) -> RunRecord | None:
         return self.runs.get(run_id)
+
+    async def upsert_processing_run(self, run: ProcessingRun) -> None:
+        async with self._lock:
+            self.processing_runs[run.video_id] = run.model_copy(deep=True)
+
+    async def get_processing_run(self, video_id: UUID) -> ProcessingRun | None:
+        run = self.processing_runs.get(video_id)
+        return run.model_copy(deep=True) if run else None
+
+    async def replace_semantic_events(
+        self, video_id: UUID, events: Sequence[SemanticEvent]
+    ) -> None:
+        async with self._lock:
+            self.semantic_events[video_id] = sorted(
+                (event.model_copy(deep=True) for event in events),
+                key=lambda item: item.time_range.start_ms,
+            )
+
+    async def list_semantic_events(self, video_id: UUID) -> Sequence[SemanticEvent]:
+        return [item.model_copy(deep=True) for item in self.semantic_events.get(video_id, [])]
+
+    async def upsert_narrative_context(self, context: NarrativeContext) -> None:
+        async with self._lock:
+            self.narrative_contexts[context.video_id] = context.model_copy(deep=True)
+
+    async def get_narrative_context(self, video_id: UUID) -> NarrativeContext | None:
+        context = self.narrative_contexts.get(video_id)
+        return context.model_copy(deep=True) if context else None
+
+    async def append_trace_event(self, event: TraceEvent) -> None:
+        async with self._lock:
+            bucket = self.trace_events.setdefault(event.trace_id, [])
+            bucket[:] = [item for item in bucket if item.id != event.id]
+            bucket.append(event.model_copy(deep=True))
+            bucket.sort(key=lambda item: (item.sequence, item.occurred_at))
+
+    async def list_trace_events(self, trace_id: UUID) -> Sequence[TraceEvent]:
+        return [item.model_copy(deep=True) for item in self.trace_events.get(trace_id, [])]
+
+    async def append_usage_event(self, event: UsageEvent) -> None:
+        async with self._lock:
+            self.usage_events[:] = [item for item in self.usage_events if item.id != event.id]
+            self.usage_events.append(event.model_copy(deep=True))
+
+    async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]:
+        events = self.usage_events
+        if video_id is not None:
+            events = [item for item in events if item.video_id == video_id]
+        return [item.model_copy(deep=True) for item in events]
 
     async def ping(self) -> None:
         return None

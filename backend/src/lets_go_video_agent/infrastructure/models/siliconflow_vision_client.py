@@ -7,9 +7,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 
+from lets_go_video_agent.domain.observability import UsageEvent
 from lets_go_video_agent.infrastructure.models.deepseek_client import CostLedger
 
 
@@ -119,8 +121,7 @@ class SiliconFlowVisionClient:
             if before is not None and after is not None
             else Decimal()
         )
-        self._ledger.append(
-            {
+        record = {
                 "timestamp": datetime.now(UTC).isoformat(),
                 "provider": "siliconflow",
                 "model": body.get("model", self.model),
@@ -132,6 +133,20 @@ class SiliconFlowVisionClient:
                 "cost_cny": str(actual_cost.quantize(Decimal("0.000000001"))),
                 "pricing_source": "SiliconFlow account balance delta",
             }
+        await self._ledger.record(
+            record,
+            UsageEvent(
+                provider="siliconflow",
+                model=str(body.get("model", self.model)),
+                purpose="video_visual_understanding",
+                input_tokens=int(usage.get("prompt_tokens") or 0),
+                output_tokens=int(usage.get("completion_tokens") or 0),
+                image_count=len(frames),
+                original_cost=actual_cost,
+                cost_cny=actual_cost,
+                pricing_version="SiliconFlow account balance delta",
+                video_id=_optional_uuid(video_id),
+            ),
         )
         content_text = str(body["choices"][0]["message"].get("content") or "")
         parsed = json.loads(content_text)
@@ -144,3 +159,10 @@ class SiliconFlowVisionClient:
             for item in observations
             if isinstance(item, dict) and int(item.get("timestamp_ms", -1)) in valid_timestamps
         ]
+
+
+def _optional_uuid(value: str | None) -> UUID | None:
+    try:
+        return UUID(value) if value else None
+    except ValueError:
+        return None

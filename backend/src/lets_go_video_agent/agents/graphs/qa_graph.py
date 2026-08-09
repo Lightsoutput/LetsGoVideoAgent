@@ -10,6 +10,7 @@ from lets_go_video_agent.agents.roles.evidence_verifier import (
     VerificationOutcome,
 )
 from lets_go_video_agent.agents.roles.qa_investigator import DraftAnswer, QAInvestigator
+from lets_go_video_agent.domain.observability import TraceEventType
 from lets_go_video_agent.domain.qa import Answer, Question
 
 
@@ -36,18 +37,57 @@ def build_qa_graph(
     """
 
     async def investigate(state: QAState) -> dict[str, object]:
+        session = state["session"]
+        await session.emit(
+            TraceEventType.AGENT_STARTED,
+            name=investigator.name,
+            status="running",
+            summary="调查员开始检索视频内证据",
+            attributes={
+                "phase": "并行检索",
+                "node_id": investigator.name,
+                "depends_on": ["video_qa_graph"],
+                "parallel_group": "qa_retrieval",
+            },
+        )
         draft = await investigator.investigate(
             question=state["question"],
-            session=state["session"],
+            session=session,
             limit=8,
+        )
+        await session.emit(
+            TraceEventType.AGENT_COMPLETED,
+            name=investigator.name,
+            status="completed",
+            summary=f"调查完成，保留 {len(draft.evidence)} 条候选证据",
+            attributes={"phase": "并行检索", "node_id": investigator.name},
         )
         return {"draft": draft}
 
     async def supplement(state: QAState) -> dict[str, object]:
+        session = state["session"]
+        await session.emit(
+            TraceEventType.AGENT_STARTED,
+            name=f"{investigator.name}:supplement",
+            status="running",
+            summary="验证未通过，扩大范围补充检索",
+            attributes={
+                "phase": "修复回路",
+                "node_id": f"{investigator.name}:supplement",
+                "depends_on": [verifier.name],
+            },
+        )
         draft = await investigator.investigate(
             question=state["question"],
-            session=state["session"],
+            session=session,
             limit=16,
+        )
+        await session.emit(
+            TraceEventType.AGENT_COMPLETED,
+            name=f"{investigator.name}:supplement",
+            status="completed",
+            summary=f"补充调查完成，保留 {len(draft.evidence)} 条候选证据",
+            attributes={"phase": "修复回路", "node_id": f"{investigator.name}:supplement"},
         )
         return {
             "draft": draft,
@@ -56,12 +96,38 @@ def build_qa_graph(
 
     async def verify(state: QAState) -> dict[str, object]:
         session = state["session"]
+        await session.emit(
+            TraceEventType.AGENT_STARTED,
+            name=verifier.name,
+            status="running",
+            summary="验证员检查引用、时间范围与全片覆盖度",
+            attributes={
+                "phase": "证据验证",
+                "node_id": verifier.name,
+                "depends_on": [investigator.name, "web_research_agent"],
+            },
+        )
         outcome = verifier.verify(
             question=state["question"],
             draft=state["draft"],
             trace_id=session.run.id,
             video_duration_ms=state.get("video_duration_ms"),
             usage=session.ledger.usage,
+        )
+        await session.emit(
+            TraceEventType.AGENT_COMPLETED,
+            name=verifier.name,
+            status="repair_required" if outcome.needs_repair else "completed",
+            summary=(
+                "验证要求补充调查"
+                if outcome.needs_repair
+                else f"证据验证完成，发现 {len(outcome.issues)} 个问题"
+            ),
+            attributes={
+                "phase": "证据验证",
+                "node_id": verifier.name,
+                "issue_count": len(outcome.issues),
+            },
         )
         return {"verification": outcome, "answer": outcome.answer}
 

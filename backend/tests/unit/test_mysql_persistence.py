@@ -9,8 +9,13 @@ def test_mysql_schema_contains_p0_source_of_truth_tables() -> None:
     assert set(Base.metadata.tables) == {
         "agent_runs",
         "answers",
+        "narrative_contexts",
+        "processing_jobs",
         "questions",
+        "semantic_events",
         "timeline_artifacts",
+        "trace_events",
+        "usage_events",
         "videos",
     }
 

@@ -6,8 +6,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
+
+from lets_go_video_agent.application.ports import ObservabilityRepository
+from lets_go_video_agent.domain.observability import UsageEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,13 +26,25 @@ class DeepSeekPrices:
 class CostLedger:
     """只记录计费元数据，不保存提示词、视频内容或 API Key。"""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        events: ObservabilityRepository | None = None,
+    ) -> None:
         self.path = path
+        self._events = events
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, record: dict[str, Any]) -> None:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+    async def record(self, record: dict[str, Any], usage: UsageEvent) -> None:
+        """同时保留 P0 JSONL 兼容记录和 V1.0 可查询的统一用量事件。"""
+        self.append(record)
+        if self._events is not None:
+            await self._events.append_usage_event(usage)
 
     def summary(self) -> dict[str, Any]:
         records: list[dict[str, Any]] = []
@@ -114,8 +130,7 @@ class DeepSeekClient:
             + Decimal(miss) * self._prices.cache_miss_input
             + Decimal(output) * self._prices.output
         ) / million
-        self._ledger.append(
-            {
+        record = {
                 "timestamp": datetime.now(UTC).isoformat(),
                 "provider": "deepseek",
                 "model": body.get("model", self.model),
@@ -128,6 +143,20 @@ class DeepSeekClient:
                 "cost_cny": str(cost.quantize(Decimal("0.000000001"))),
                 "pricing_source": "DeepSeek official V4 Flash pricing",
             }
+        await self._ledger.record(
+            record,
+            UsageEvent(
+                provider="deepseek",
+                model=str(body.get("model", self.model)),
+                purpose=purpose,
+                input_tokens=prompt,
+                output_tokens=output,
+                original_cost=cost,
+                cost_cny=cost,
+                cache_hit=hit > 0,
+                pricing_version="DeepSeek official V4 Flash pricing",
+                video_id=_optional_uuid(video_id),
+            ),
         )
         content = str(body["choices"][0]["message"].get("content") or "").strip()
         return _parse_json_object(content)
@@ -148,3 +177,10 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise json.JSONDecodeError("expected JSON object", content, 0)
     return parsed
+
+
+def _optional_uuid(value: str | None) -> UUID | None:
+    try:
+        return UUID(value) if value else None
+    except ValueError:
+        return None

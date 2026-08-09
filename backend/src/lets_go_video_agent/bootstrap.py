@@ -51,6 +51,8 @@ class Container:
     questions: QuestionService
     processing: LocalProcessingManager
     cost_ledger: CostLedger
+    harness: AgentHarness
+    search: McpSearchClient | SearxngClient | None
 
     async def startup(self) -> None:
         await self.store.ping()
@@ -76,7 +78,10 @@ def build_container(settings: Settings) -> Container:
         raise RuntimeError(f"未知仓库后端: {settings.repository_backend}")
     retrieval = InMemoryRetrieval(store)
     verifier = EvidenceVerifier()
-    cost_ledger = CostLedger(settings.local_data_dir / "costs" / "model-usage.jsonl")
+    cost_ledger = CostLedger(
+        settings.local_data_dir / "costs" / "model-usage.jsonl",
+        events=store,
+    )
     llm = None
     if settings.llm_provider == "deepseek" and settings.llm_api_key:
         llm = DeepSeekClient(
@@ -106,20 +111,20 @@ def build_container(settings: Settings) -> Container:
             ledger=cost_ledger,
             proxy_url=settings.outbound_http_proxy,
         )
+    web_search: McpSearchClient | SearxngClient | None = None
+    if settings.search_provider == "mcp":
+        web_search = McpSearchClient(url=settings.search_mcp_url)
+    elif settings.search_provider == "searxng":
+        web_search = SearxngClient(api_base=settings.search_api_base)
+
     frame_inspector = InMemoryFrameInspector(
         retrieval,
         store=store,
         data_dir=settings.local_data_dir,
         vlm=vlm,
     )
-    tool_registry = build_video_tool_registry(retrieval, frame_inspector)
-    harness = AgentHarness(tool_registry)
-
-    web_search: McpSearchClient | SearxngClient | None = None
-    if settings.search_provider == "mcp":
-        web_search = McpSearchClient(url=settings.search_mcp_url)
-    elif settings.search_provider == "searxng":
-        web_search = SearxngClient(api_base=settings.search_api_base)
+    tool_registry = build_video_tool_registry(retrieval, frame_inspector, web_search)
+    harness = AgentHarness(tool_registry, events=store)
 
     video_service = VideoService(
         videos=store,
@@ -166,4 +171,6 @@ def build_container(settings: Settings) -> Container:
         questions=question_service,
         processing=processing,
         cost_ledger=cost_ledger,
+        harness=harness,
+        search=web_search,
     )

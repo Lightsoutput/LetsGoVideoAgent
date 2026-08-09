@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatPanel } from "@/features/video-chat/ChatPanel";
 import { ImportPanel } from "@/features/video-ingest/ImportPanel";
+import { ObservabilityPanel } from "@/features/observability/ObservabilityPanel";
 import { Timeline } from "@/features/timeline/Timeline";
 import { VideoStage } from "@/features/video-workbench/VideoStage";
 import { getProcessing, getTimeline, getVideo, listVideos, startProcessing } from "@/lib/api/client";
@@ -18,6 +19,10 @@ export function VideoWorkbench() {
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<ProcessingRun | null>(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [showObservability, setShowObservability] = useState(false);
+  const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<string | null>(null);
+  const processingStatusRef = useRef<Record<string, ProcessingRun["status"]>>({});
 
   const selectedVideo =
     videos.find((video) => video.id === selectedId) ?? videos[0] ?? null;
@@ -70,7 +75,22 @@ export function VideoWorkbench() {
           getVideo(selectedVideoId),
         ]);
         if (!active) return;
+        const previousStatus = processingStatusRef.current[selectedVideoId];
+        processingStatusRef.current[selectedVideoId] = run.status;
+        if (previousStatus !== run.status && run.status === "completed") {
+          const message = `${video.title} 已完成多模态理解，可以查看章节、摘要和 Agent Trace。`;
+          setRunNotice(message);
+          window.setTimeout(() => setRunNotice(null), 7_000);
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("LetsGoVideoAgent 处理完成", { body: message });
+          }
+        } else if (previousStatus !== run.status && run.status === "failed") {
+          setRunNotice(`${video.title} 处理失败，Agent Trace 中已记录失败节点和自动重试过程。`);
+          window.setTimeout(() => setRunNotice(null), 9_000);
+        }
         setProcessing(run);
+        // 视频一进入处理流程就把 processing trace 设为当前 Trace，观测面板无需等待首次问答。
+        setActiveTraceId(run.trace_id);
         setVideos((items) => items.map((item) => (item.id === video.id ? video : item)));
         if (run.status === "completed") setTimeline(await getTimeline(selectedVideoId));
       } catch {
@@ -78,7 +98,7 @@ export function VideoWorkbench() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    const timer = window.setInterval(() => void refresh(), 1200);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -101,6 +121,7 @@ export function VideoWorkbench() {
     setCurrentTimeMs(0);
     setTimeline([]);
     setProcessing(null);
+    setActiveTraceId(null);
   }
 
   function handleImported(video: Video) {
@@ -118,14 +139,16 @@ export function VideoWorkbench() {
     if (!selectedVideoId) return;
     setError(null);
     try {
-      setProcessing(await startProcessing(selectedVideoId));
+      const run = await startProcessing(selectedVideoId);
+      setProcessing(run);
+      setActiveTraceId(run.trace_id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "无法重新启动处理任务");
     }
   }
 
   return (
-    <div className="app-shell compact-shell">
+    <div className={`app-shell compact-shell ${showObservability ? "ops-open" : ""}`}>
       <header className="app-header compact-header">
         <div className="brand">
           <div className="brand-mark"><span /></div>
@@ -154,6 +177,13 @@ export function VideoWorkbench() {
           </button>
         </div>
         <div className="header-status">
+          <button
+            className="observability-button"
+            onClick={() => setShowObservability((current) => !current)}
+            type="button"
+          >
+            {showObservability ? "返回对话" : "运行观测"}
+          </button>
           <span className="profile-badge">ECONOMY</span>
           <span className="connection-state">
             <i className={error ? "offline" : ""} />
@@ -163,6 +193,13 @@ export function VideoWorkbench() {
       </header>
 
       <main className="workspace-main">
+        {runNotice && (
+          <div className="run-notice" aria-live="assertive">
+            <i />
+            <span>{runNotice}</span>
+            <button aria-label="关闭运行提醒" onClick={() => setRunNotice(null)} type="button">×</button>
+          </div>
+        )}
         {error && (
           <div className="connection-error">
             <strong>API 尚未连接</strong>
@@ -216,12 +253,32 @@ export function VideoWorkbench() {
         )}
       </main>
 
-      <ChatPanel
-        activeRange={activeChapter?.time_range ?? null}
-        currentTimeMs={currentTimeMs}
-        onSeek={seek}
-        video={selectedVideo}
-      />
+      <div className="side-workspace">
+        <div className="side-chat" hidden={showObservability}>
+          <ChatPanel
+            activeRange={activeChapter?.time_range ?? null}
+            currentTimeMs={currentTimeMs}
+            onSeek={seek}
+            onAnswer={(answer) => {
+              setActiveTraceId(answer.trace_id);
+            }}
+            onOpenTrace={(traceId) => {
+              setActiveTraceId(traceId);
+              setShowObservability(true);
+            }}
+            video={selectedVideo}
+          />
+        </div>
+
+        <ObservabilityPanel
+          key={`${showObservability ? "open" : "closed"}:${activeTraceId ?? "system"}`}
+          onClose={() => setShowObservability(false)}
+          open={showObservability}
+          processing={processing}
+          traceId={activeTraceId}
+          videoId={selectedVideoId}
+        />
+      </div>
 
       {showImporter && (
         <div className="import-modal-backdrop" onMouseDown={() => setShowImporter(false)} role="presentation">

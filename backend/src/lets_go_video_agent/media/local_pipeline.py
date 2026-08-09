@@ -4,16 +4,18 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
 from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from uuid import UUID
 
 from lets_go_video_agent.domain.common import Provenance, TimeRange, utc_now
+from lets_go_video_agent.domain.observability import TraceEvent, TraceEventType
 from lets_go_video_agent.domain.processing import ProcessingRun, ProcessingStatus
+from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
 from lets_go_video_agent.domain.timeline import ObservationType, TimelineArtifact, TimelineKind
 from lets_go_video_agent.domain.video import VideoStatus, WebSource
 from lets_go_video_agent.infrastructure.models.deepseek_client import DeepSeekClient
@@ -30,6 +32,23 @@ from lets_go_video_agent.media.ytdlp import YtDlpAdapter
 
 # 修改分析策略后递增，避免旧字幕、视觉理解和分段结果继续污染新任务。
 ANALYSIS_CACHE_VERSION = "semantic-v3"
+
+PROCESSING_STAGE_AGENTS = {
+    "reading_web_metadata": "ingestion_agent",
+    "downloading": "ingestion_agent",
+    "downloaded": "ingestion_agent",
+    "probing": "ingestion_agent",
+    "parallel_perception": "perception_coordinator",
+    "transcribing": "audio_perception_agent",
+    "sampling_frames": "visual_sampling_agent",
+    "ocr": "ocr_perception_agent",
+    "visual_understanding": "vlm_understanding_agent",
+    "diarizing": "speaker_analysis_agent",
+    "summarizing": "timeline_curator_agent",
+    "auto_retry": "recovery_agent",
+}
+
+T = TypeVar("T")
 
 
 @lru_cache(maxsize=1)
@@ -751,7 +770,7 @@ def build_major_sections(
                 kind=TimelineKind.SEGMENT,
                 time_range=TimeRange(start_ms=start, end_ms=min(duration_ms, end)),
                 title=items[0].title,
-                text="；".join(item.title for item in items)[:300],
+                text="；".join(item.title or "未命名章节" for item in items)[:300],
                 confidence=min(item.confidence for item in items),
                 observation_type=ObservationType.INFERENCE,
                 tags=[f"major-section:{major_index:02d}"],
@@ -759,6 +778,115 @@ def build_major_sections(
             )
         )
     return result
+
+
+def build_semantic_understanding(
+    *,
+    video_id: UUID,
+    artifacts: list[TimelineArtifact],
+    visual_items: list[dict[str, Any]],
+    video_format: str,
+    purpose: str,
+    overall_summary: str,
+    model_name: str | None,
+) -> tuple[list[SemanticEvent], NarrativeContext | None]:
+    """将多轨观察提升为事件和全片叙事上下文。
+
+    这里只做来源绑定和结构归一化，不凭空补写领域事实；高层语义必须来自已经通过
+    时间校验的章节、VLM observation 和字幕说话人信息。
+    """
+
+    chapters = sorted(
+        (item for item in artifacts if item.kind is TimelineKind.CHAPTER),
+        key=lambda item: item.time_range.start_ms,
+    )
+    if not chapters:
+        return [], None
+
+    events: list[SemanticEvent] = []
+    for chapter in chapters:
+        linked = [
+            item
+            for item in artifacts
+            if item.id != chapter.id and item.time_range.overlaps(chapter.time_range)
+        ]
+        chapter_visuals = [
+            item
+            for item in visual_items
+            if chapter.time_range.contains(int(item.get("timestamp_ms", -1)))
+        ]
+        participants = list(
+            dict.fromkeys(item.speaker for item in linked if item.speaker)
+        )
+        entities = list(
+            dict.fromkeys(
+                str(entity).strip()
+                for item in chapter_visuals
+                for entity in item.get("entities", [])
+                if str(entity).strip()
+            )
+        )
+        actions = list(
+            dict.fromkeys(
+                str(action).strip()
+                for item in chapter_visuals
+                for action in item.get("actions", [])
+                if str(action).strip()
+            )
+        )
+        clean_title = (chapter.title or "未命名章节").split("｜", 1)[-1]
+        events.append(
+            SemanticEvent(
+                video_id=video_id,
+                time_range=chapter.time_range,
+                event_type="topic_segment",
+                title=clean_title,
+                summary=chapter.text or f"该片段围绕“{clean_title}”展开。",
+                participants=participants,
+                entities=entities[:40],
+                actions=actions[:40],
+                artifact_ids=[chapter.id, *(item.id for item in linked[:80])],
+                confidence=chapter.confidence,
+                provenance=Provenance(
+                    producer="multimodal-understanding-builder",
+                    model=model_name,
+                    prompt_version="semantic-event-v1",
+                ),
+            )
+        )
+
+    normalized_summary = overall_summary.strip() or "；".join(
+        event.summary for event in events
+    )[:4_000]
+    normalized_purpose = purpose.strip() or f"围绕“{events[0].title}”组织并呈现视频内容。"
+    all_participants = list(
+        dict.fromkeys(participant for event in events for participant in event.participants)
+    )
+    settings = list(
+        dict.fromkeys(
+            str(item.get("scene", "")).strip()
+            for item in visual_items
+            if str(item.get("scene", "")).strip()
+        )
+    )
+    narrative = NarrativeContext(
+        video_id=video_id,
+        video_format=video_format.strip() or "general_video",
+        purpose=normalized_purpose,
+        summary=normalized_summary,
+        participants=all_participants,
+        settings=settings[:30],
+        themes=[event.title for event in events],
+        event_ids=[event.id for event in events],
+        artifact_ids=list(dict.fromkeys(item.id for item in artifacts))[:500],
+        confidence=sum(event.confidence for event in events) / len(events),
+        provenance=Provenance(
+            producer="multimodal-understanding-builder",
+            model=model_name,
+            prompt_version="narrative-context-v1",
+        ),
+    )
+    return events, narrative
 
 
 def build_fallback_chapters(
@@ -998,6 +1126,9 @@ class LocalProcessingManager:
         self._runs: dict[UUID, ProcessingRun] = {}
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._attempts: dict[UUID, int] = {}
+        self._trace_sequences: dict[UUID, int] = {}
+        self._trace_stages: dict[UUID, str] = {}
+        self._trace_locks: dict[UUID, asyncio.Lock] = {}
 
     def get(self, video_id: UUID) -> ProcessingRun | None:
         run = self._runs.get(video_id)
@@ -1020,8 +1151,151 @@ class LocalProcessingManager:
         run = ProcessingRun(video_id=video_id)
         self._runs[video_id] = run
         self._attempts[video_id] = 0
+        self._trace_sequences[run.trace_id] = 0
+        self._trace_stages.pop(run.trace_id, None)
+        self._trace_locks[run.trace_id] = asyncio.Lock()
         self._tasks[video_id] = asyncio.create_task(self._process(run))
         return run.model_copy(deep=True)
+
+    async def _emit_processing_stage(
+        self,
+        run: ProcessingRun,
+        *,
+        stage: str,
+        label: str,
+        progress: float,
+        message: str,
+    ) -> None:
+        """每次阶段切换记录一条公开 Trace，重复进度刷新不会刷屏。"""
+        if self._trace_stages.get(run.trace_id) == stage:
+            return
+        self._trace_stages[run.trace_id] = stage
+        if stage == "queued":
+            event_type = TraceEventType.WORKFLOW_STARTED
+            agent_name = "video_processing_graph"
+            event_status = "running"
+        elif stage == "ready":
+            event_type = TraceEventType.WORKFLOW_COMPLETED
+            agent_name = "video_processing_graph"
+            event_status = "completed"
+        elif stage == "failed":
+            event_type = TraceEventType.WORKFLOW_FAILED
+            agent_name = "video_processing_graph"
+            event_status = "failed"
+        else:
+            event_type = TraceEventType.AGENT_STARTED
+            agent_name = PROCESSING_STAGE_AGENTS.get(stage, "video_processing_graph")
+            event_status = "running"
+        phase = {
+            "queued": "入口",
+            "probing": "媒体准备",
+            "parallel_perception": "并行感知",
+            "summarizing": "语义融合",
+            "ready": "完成",
+            "failed": "完成",
+        }.get(stage, "工作流")
+        depends_on: list[str] = []
+        if stage == "parallel_perception":
+            depends_on = ["ingestion_agent"]
+        elif stage == "summarizing":
+            depends_on = ["speaker_analysis_agent"]
+        elif stage in {"ready", "failed"}:
+            depends_on = ["timeline_curator_agent"]
+        await self._append_processing_trace(
+            run,
+            event_type=event_type,
+            name=agent_name,
+            status=event_status,
+            summary=f"{label}：{message}",
+            attributes={
+                "stage": stage,
+                "stage_label": label,
+                "progress": round(progress, 4),
+                "attempt_count": run.attempt_count,
+                "phase": phase,
+                "node_id": agent_name,
+                "depends_on": depends_on,
+            },
+        )
+
+    async def _append_processing_trace(
+        self,
+        run: ProcessingRun,
+        *,
+        event_type: TraceEventType,
+        name: str,
+        status: str,
+        summary: str,
+        attributes: dict[str, object],
+    ) -> None:
+        """并发安全地分配 Trace 序号，保证多个感知 Agent 同时结束时不会冲突。"""
+        lock = self._trace_locks.setdefault(run.trace_id, asyncio.Lock())
+        async with lock:
+            sequence = self._trace_sequences.get(run.trace_id, 0) + 1
+            self._trace_sequences[run.trace_id] = sequence
+            await self._store.append_trace_event(
+                TraceEvent(
+                    trace_id=run.trace_id,
+                    sequence=sequence,
+                    event_type=event_type,
+                    name=name,
+                    status=status,
+                    summary=summary,
+                    video_id=run.video_id,
+                    task_id=run.id,
+                    agent_id=name,
+                    attributes=attributes,
+                )
+            )
+
+    async def _run_processing_agent(
+        self,
+        run: ProcessingRun,
+        *,
+        name: str,
+        label: str,
+        phase: str,
+        operation: Callable[[], Awaitable[T]],
+        depends_on: list[str],
+        parallel_group: str | None = None,
+    ) -> T:
+        """执行一个可观测节点；同一 parallel_group 的节点由 asyncio 并发调度。"""
+        attributes: dict[str, object] = {
+            "phase": phase,
+            "node_id": name,
+            "depends_on": depends_on,
+        }
+        if parallel_group:
+            attributes["parallel_group"] = parallel_group
+        await self._append_processing_trace(
+            run,
+            event_type=TraceEventType.AGENT_STARTED,
+            name=name,
+            status="running",
+            summary=f"{label}开始执行",
+            attributes=attributes,
+        )
+        try:
+            result = await operation()
+        except Exception as exc:
+            await self._append_processing_trace(
+                run,
+                event_type=TraceEventType.AGENT_FAILED,
+                name=name,
+                status="failed",
+                summary=f"{label}失败：{type(exc).__name__}",
+                attributes=attributes,
+            )
+            raise
+        await self._append_processing_trace(
+            run,
+            event_type=TraceEventType.AGENT_COMPLETED,
+            name=name,
+            status="completed",
+            summary=f"{label}执行完成",
+            attributes=attributes,
+        )
+        return result
 
     async def _update(
         self, run: ProcessingRun, stage: str, label: str, progress: float, message: str
@@ -1037,6 +1311,13 @@ class LocalProcessingManager:
             # 网页媒体导入占总进度前 25%，后续内容理解映射到剩余 75%，避免进度倒退。
             progress = 0.25 + progress * 0.75
         run.stage, run.stage_label, run.progress, run.message = stage, label, progress, message
+        await self._emit_processing_stage(
+            run,
+            stage=stage,
+            label=label,
+            progress=progress,
+            message=message,
+        )
         if run.started_at:
             run.elapsed_seconds = (utc_now() - run.started_at).total_seconds()
             run.eta_seconds = (
@@ -1048,15 +1329,125 @@ class LocalProcessingManager:
         (state_dir / f"{run.video_id}.json").write_text(
             run.model_dump_json(indent=2), encoding="utf-8"
         )
+        # JSON 文件便于本地排障；Repository 才是 V1.0 可恢复任务的权威状态。
+        await self._store.upsert_processing_run(run)
         if video:
             video.status = VideoStatus.READY if progress >= 1 else VideoStatus.PROCESSING
             video.progress, video.current_stage, video.updated_at = progress, stage, utc_now()
             await self._store.update(video)
 
+    async def _prepare_transcript(
+        self,
+        *,
+        source: Path,
+        video: Any,
+        transcript_cache: Path,
+    ) -> list[dict[str, Any]]:
+        """音频分支：优先复用字幕轨/缓存，否则运行 Whisper。"""
+        if await asyncio.to_thread(transcript_cache.exists):
+            cached_text = await asyncio.to_thread(
+                transcript_cache.read_text, encoding="utf-8"
+            )
+            transcript = list(json.loads(cached_text))
+        else:
+            source_subtitles = await asyncio.to_thread(load_sidecar_subtitles, source)
+            if source_subtitles:
+                transcript = source_subtitles
+                video.metadata["transcript_source"] = "source-subtitle-track"
+            else:
+                transcript = await asyncio.to_thread(transcribe, source, self._asr_model)
+                video.metadata["transcript_source"] = "faster-whisper"
+        transcript = [
+            {**item, "text": normalize_chinese_text(str(item["text"]))}
+            for item in transcript
+        ]
+        await asyncio.to_thread(
+            transcript_cache.write_text,
+            json.dumps(transcript, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return transcript
+
+    async def _prepare_ocr(
+        self,
+        *,
+        frames: list[dict[str, Any]],
+        ocr_cache: Path,
+        run: ProcessingRun,
+    ) -> list[dict[str, Any]]:
+        """视觉文字分支，与 VLM 画面语义分支并行。"""
+
+        def report_ocr_progress(completed: int, total: int) -> None:
+            ratio = completed / max(1, total)
+            run.progress = max(run.progress, 0.20 + ratio * 0.45)
+            run.message = f"并行感知：OCR {completed}/{total}，结果已保存"
+            run.elapsed_seconds = (
+                (utc_now() - run.started_at).total_seconds() if run.started_at else 0
+            )
+            self._runs[run.video_id] = run.model_copy(deep=True)
+
+        return await asyncio.to_thread(run_ocr, frames, ocr_cache, report_ocr_progress)
+
+    async def _prepare_visual_understanding(
+        self,
+        *,
+        frames: list[dict[str, Any]],
+        visual_cache: Path | None,
+        video: Any,
+        run: ProcessingRun,
+    ) -> list[dict[str, Any]]:
+        """视觉语义分支：分批调用 VLM，并在每批后保存断点。"""
+        if self._vlm is None or visual_cache is None:
+            return []
+        visual_items: list[dict[str, Any]] = []
+        if await asyncio.to_thread(visual_cache.exists):
+            try:
+                cached_text = await asyncio.to_thread(
+                    visual_cache.read_text, encoding="utf-8"
+                )
+                visual_items = list(json.loads(cached_text))
+            except (json.JSONDecodeError, OSError, TypeError):
+                visual_items = []
+        if not visual_items:
+            selected_frames = select_visual_frames(frames, max_frames=24)
+            for offset in range(0, len(selected_frames), 4):
+                batch = selected_frames[offset : offset + 4]
+                try:
+                    visual_items.extend(
+                        await self._vlm.analyze_frames(batch, video_id=str(video.id))
+                    )
+                except Exception as exc:
+                    video.metadata["vlm_batch_error"] = type(exc).__name__
+                run.progress = max(
+                    run.progress,
+                    0.20 + 0.45 * min(1, (offset + len(batch)) / max(1, len(selected_frames))),
+                )
+                run.message = (
+                    f"并行感知：VLM {min(offset + len(batch), len(selected_frames))}/"
+                    f"{len(selected_frames)}，结果已保存"
+                )
+                await asyncio.to_thread(
+                    visual_cache.write_text,
+                    json.dumps(visual_items, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+        video.metadata["visual_understanding"] = (
+            f"{self._vlm.provider}:{self._vlm.model}:semantic-frame-v1"
+        )
+        video.metadata["vlm_observations"] = len(visual_items)
+        return visual_items
+
     async def _process(self, run: ProcessingRun) -> None:
         attempt = self._attempts.get(run.video_id, 0) + 1
         self._attempts[run.video_id] = attempt
-        run.status, run.started_at = ProcessingStatus.RUNNING, utc_now()
+        run.status, run.started_at, run.attempt_count = ProcessingStatus.RUNNING, utc_now(), attempt
+        await self._emit_processing_stage(
+            run,
+            stage="queued",
+            label="启动视频理解工作流",
+            progress=0,
+            message="已创建处理 Trace，正在装配感知与理解 Agent",
+        )
         try:
             video = await self._store.get(run.video_id)
             if video is None:
@@ -1086,70 +1477,54 @@ class LocalProcessingManager:
             video.metadata.update(meta)
             await self._store.update(video)
 
+            # 音频与视觉索引不存在数据依赖：先分叉并发，等两个分支都完成后再做说话人和语义融合。
             await self._update(
                 run,
-                "transcribing",
-                "语音转写",
-                0.12,
-                f"本地 Whisper ({self._asr_model}) 正在识别语音",
+                "parallel_perception",
+                "并行多模态感知",
+                0.10,
+                "音频转写与画面索引已并行启动",
             )
-            # 转写是最耗时步骤，按源文件哈希/对象名缓存，进程意外退出后不必重新计算。
             cache_dir = self._data_dir / "processing-cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_key = getattr(video.source, "sha256", None) or source.stem
             transcript_cache = cache_dir / (
                 f"{cache_key}.{ANALYSIS_CACHE_VERSION}.{self._asr_model}.transcript.json"
             )
-            if transcript_cache.exists():
-                transcript = json.loads(transcript_cache.read_text(encoding="utf-8"))
-            else:
-                source_subtitles = await asyncio.to_thread(load_sidecar_subtitles, source)
-                if source_subtitles:
-                    transcript = source_subtitles
-                    video.metadata["transcript_source"] = "source-subtitle-track"
-                else:
-                    transcript = await asyncio.to_thread(transcribe, source, self._asr_model)
-                    video.metadata["transcript_source"] = "faster-whisper"
-            # 旧缓存也在此处归一化，因此无需重新跑耗时的 Whisper。
-            transcript = [
-                {**item, "text": normalize_chinese_text(str(item["text"]))} for item in transcript
-            ]
-            transcript_cache.write_text(
-                json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
-            )
-            await self._update(
-                run, "sampling_frames", "抽取关键帧", 0.62, "正在建立可按时间戳访问的画面索引"
+            transcript_task = asyncio.create_task(
+                self._run_processing_agent(
+                    run,
+                    name="audio_perception_agent",
+                    label=f"语音转写（{self._asr_model}）",
+                    phase="并行感知",
+                    operation=lambda: self._prepare_transcript(
+                        source=source,
+                        video=video,
+                        transcript_cache=transcript_cache,
+                    ),
+                    depends_on=["ingestion_agent"],
+                    parallel_group="multimodal_perception",
+                )
             )
             frame_dir = self._data_dir / "frames" / str(video.id)
-            frames = await asyncio.to_thread(
-                extract_keyframes, source, frame_dir, video.duration_ms
-            )
-            await self._update(
-                run, "ocr", "识别画面文字", 0.72, f"正在识别 {len(frames)} 张采样画面中的文字"
-            )
+            try:
+                frames = await self._run_processing_agent(
+                    run,
+                    name="visual_sampling_agent",
+                    label="抽取可访问画面索引",
+                    phase="并行感知",
+                    operation=lambda: asyncio.to_thread(
+                        extract_keyframes, source, frame_dir, video.duration_ms
+                    ),
+                    depends_on=["ingestion_agent"],
+                    parallel_group="multimodal_perception",
+                )
+            except BaseException:
+                # 任一并行分支失败都取消同组任务，避免自动重试时旧 ASR 仍在后台占用资源。
+                transcript_task.cancel()
+                await asyncio.gather(transcript_task, return_exceptions=True)
+                raise
             ocr_cache = cache_dir / f"{cache_key}.{ANALYSIS_CACHE_VERSION}.ocr.json"
-
-            def report_ocr_progress(completed: int, total: int) -> None:
-                ratio = completed / max(1, total)
-                raw_progress = 0.72 + ratio * 0.10
-                effective_progress = (
-                    0.25 + raw_progress * 0.75
-                    if isinstance(video.source, WebSource)
-                    else raw_progress
-                )
-                run.progress = effective_progress
-                run.message = f"画面文字 {completed}/{total}，已保存断点"
-                run.elapsed_seconds = (
-                    (utc_now() - run.started_at).total_seconds() if run.started_at else 0
-                )
-                self._runs[run.video_id] = run.model_copy(deep=True)
-
-            ocr_items = await asyncio.to_thread(
-                run_ocr,
-                frames,
-                ocr_cache,
-                report_ocr_progress,
-            )
             visual_model_key = re.sub(r"[^A-Za-z0-9_.-]", "_", self._vlm.model) if self._vlm else ""
             visual_cache = (
                 cache_dir
@@ -1157,64 +1532,97 @@ class LocalProcessingManager:
                 if self._vlm
                 else None
             )
-            visual_items: list[dict[str, Any]] = []
-            if self._vlm and visual_cache:
-                await self._update(
+            ocr_task = asyncio.create_task(
+                self._run_processing_agent(
                     run,
-                    "visual_understanding",
-                    "理解关键画面",
-                    0.825,
-                    "Qwen3-VL 正在理解场景、人物、动作和界面含义",
+                    name="ocr_perception_agent",
+                    label=f"识别 {len(frames)} 张画面文字",
+                    phase="并行视觉理解",
+                    operation=lambda: self._prepare_ocr(
+                        frames=frames,
+                        ocr_cache=ocr_cache,
+                        run=run,
+                    ),
+                    depends_on=["visual_sampling_agent"],
+                    parallel_group="visual_perception",
                 )
-                if visual_cache.exists():
-                    try:
-                        visual_items = list(json.loads(visual_cache.read_text(encoding="utf-8")))
-                    except (json.JSONDecodeError, OSError, TypeError):
-                        visual_items = []
-                if not visual_items:
-                    selected_frames = select_visual_frames(frames, max_frames=24)
-                    for offset in range(0, len(selected_frames), 4):
-                        batch = selected_frames[offset : offset + 4]
-                        try:
-                            visual_items.extend(
-                                await self._vlm.analyze_frames(batch, video_id=str(video.id))
-                            )
-                        except Exception as exc:
-                            video.metadata["vlm_batch_error"] = type(exc).__name__
-                        run.message = (
-                            f"关键画面理解 {min(offset + len(batch), len(selected_frames))}/"
-                            f"{len(selected_frames)}，结果已分批保存"
-                        )
-                        visual_cache.write_text(
-                            json.dumps(visual_items, ensure_ascii=False), encoding="utf-8"
-                        )
-                video.metadata["visual_understanding"] = (
-                    f"{self._vlm.provider}:{self._vlm.model}:semantic-frame-v1"
+            )
+            visual_task = asyncio.create_task(
+                self._run_processing_agent(
+                    run,
+                    name="vlm_understanding_agent",
+                    label="理解场景、人物、动作和界面含义",
+                    phase="并行视觉理解",
+                    operation=lambda: self._prepare_visual_understanding(
+                        frames=frames,
+                        visual_cache=visual_cache,
+                        video=video,
+                        run=run,
+                    ),
+                    depends_on=["visual_sampling_agent"],
+                    parallel_group="visual_perception",
                 )
-                video.metadata["vlm_observations"] = len(visual_items)
+            )
+            try:
+                transcript, ocr_items, visual_items = await asyncio.gather(
+                    transcript_task, ocr_task, visual_task
+                )
+            except BaseException:
+                for task in (transcript_task, ocr_task, visual_task):
+                    task.cancel()
+                await asyncio.gather(
+                    transcript_task,
+                    ocr_task,
+                    visual_task,
+                    return_exceptions=True,
+                )
+                raise
+            await self._append_processing_trace(
+                run,
+                event_type=TraceEventType.AGENT_COMPLETED,
+                name="perception_fusion_gate",
+                status="completed",
+                summary="音频、OCR 与 VLM 分支全部完成，进入跨模态融合",
+                attributes={
+                    "phase": "感知汇合",
+                    "node_id": "perception_fusion_gate",
+                    "depends_on": [
+                        "audio_perception_agent",
+                        "ocr_perception_agent",
+                        "vlm_understanding_agent",
+                    ],
+                },
+            )
             speaker_cache = (
                 cache_dir / f"{cache_key}.{ANALYSIS_CACHE_VERSION}.speakers.identity-v6.json"
             )
-            speaker_labels: list[str] = []
-            if speaker_cache.exists():
-                try:
-                    speaker_labels = list(json.loads(speaker_cache.read_text(encoding="utf-8")))
-                except (json.JSONDecodeError, OSError, TypeError):
-                    speaker_labels = []
-            if len(speaker_labels) != len(transcript):
-                await self._update(
-                    run,
-                    "diarizing",
-                    "区分并命名说话人",
-                    0.82,
-                    "正在结合音色、自我介绍和画面称呼匹配说话人",
-                )
-                speaker_labels = await asyncio.to_thread(
-                    diarize_speakers, source, transcript, ocr_items
-                )
-                speaker_cache.write_text(
-                    json.dumps(speaker_labels, ensure_ascii=False), encoding="utf-8"
-                )
+
+            async def prepare_speakers() -> list[str]:
+                speaker_labels: list[str] = []
+                if speaker_cache.exists():
+                    try:
+                        speaker_labels = list(
+                            json.loads(speaker_cache.read_text(encoding="utf-8"))
+                        )
+                    except (json.JSONDecodeError, OSError, TypeError):
+                        speaker_labels = []
+                if len(speaker_labels) != len(transcript):
+                    speaker_labels = await asyncio.to_thread(
+                        diarize_speakers, source, transcript, ocr_items
+                    )
+                    speaker_cache.write_text(
+                        json.dumps(speaker_labels, ensure_ascii=False), encoding="utf-8"
+                    )
+                return speaker_labels
+
+            speaker_labels = await self._run_processing_agent(
+                run,
+                name="speaker_analysis_agent",
+                label="结合音色、对话逻辑与画面称呼匹配说话人",
+                phase="跨模态融合",
+                operation=prepare_speakers,
+                depends_on=["perception_fusion_gate"],
+            )
             for item, speaker in zip(transcript, speaker_labels, strict=True):
                 item["speaker"] = speaker
             video.metadata["speaker_count"] = len(set(speaker_labels))
@@ -1373,15 +1781,17 @@ class LocalProcessingManager:
                     summary = await self._llm.complete_json(
                         system=(
                             "你是视频时间轴策展 Agent。依据转写、OCR、Qwen3-VL画面语义和"
-                            "联网术语证据输出 JSON："
-                            "summary 字符串；chapters 数组，每项含 start_ms、end_ms、title、"
+                            "联网术语证据输出 JSON：video_format 表示视频的通用内容形态；"
+                            "purpose 说明创作者希望观众理解或完成什么；summary 字符串；"
+                            "chapters 数组，每项含 start_ms、end_ms、title、"
                             "summary；quick_questions 数组，预生成3到5个帮助用户理解视频的"
                             "问题与答案，每项含question、answer、start_ms；"
                             "subtitle_corrections 数组，每项含 index、corrected_text、"
                             "reason。字幕修正只处理结合上下文、邻近OCR、标题后非常明确的识别错误，"
                             "最多 60 条；OCR若只是菜单或界面无关文字，不得强行替换字幕；"
                             "不要润色口语、不要改变原意、没有明确错误就返回空数组。不要编造。"
-                            'JSON示例：{"summary":"全片概述","chapters":[{"start_ms":0,'
+                            'JSON示例：{"video_format":"教程","purpose":"帮助观众掌握操作",'
+                            '"summary":"全片概述","chapters":[{"start_ms":0,'
                             '"end_ms":60000,"title":"章节名","summary":"本节解释"}],'
                             '"subtitle_corrections":[]}。章节必须连续覆盖全片，标题体现具体主题。'
                             "若字幕明确声明有N条建议/要点并出现第一、第二等序号，必须为每一条单独分章，"
@@ -1398,6 +1808,10 @@ class LocalProcessingManager:
                     video.metadata["llm_summary_error"] = type(exc).__name__
                     summary = {"summary": "", "chapters": []}
                 video.metadata["summary"] = str(summary.get("summary", ""))
+                video.metadata["video_format"] = str(
+                    summary.get("video_format") or "general_video"
+                )
+                video.metadata["video_purpose"] = str(summary.get("purpose") or "")
                 quick_questions = []
                 for item in summary.get("quick_questions", [])[:5]:
                     if not isinstance(item, dict):
@@ -1629,6 +2043,8 @@ class LocalProcessingManager:
                         video.metadata["video_format"] = str(
                             recovery.get("video_format") or "unknown"
                         )
+                        if not video.metadata.get("summary"):
+                            video.metadata["summary"] = str(recovery.get("summary") or "")
                     except Exception as exc:
                         video.metadata["chapter_recovery_error"] = type(exc).__name__
                 if model_chapters:
@@ -1658,7 +2074,25 @@ class LocalProcessingManager:
                 duration_ms=video.duration_ms,
             )
             artifacts.extend(representative_frames)
-            await self._store.add_many([*direct_artifacts, *artifacts])
+            all_artifacts = [*direct_artifacts, *artifacts]
+            await self._store.add_many(all_artifacts)
+            semantic_events, narrative_context = build_semantic_understanding(
+                video_id=video.id,
+                artifacts=all_artifacts,
+                visual_items=visual_items,
+                video_format=str(video.metadata.get("video_format") or "general_video"),
+                purpose=str(video.metadata.get("video_purpose") or ""),
+                overall_summary=str(video.metadata.get("summary") or ""),
+                model_name=(
+                    self._llm.model
+                    if self._llm
+                    and video.metadata.get("chapter_source") == "timeline_curator_agent"
+                    else None
+                ),
+            )
+            await self._store.replace_semantic_events(video.id, semantic_events)
+            if narrative_context is not None:
+                await self._store.upsert_narrative_context(narrative_context)
             video.status, video.progress, video.current_stage, video.updated_at = (
                 VideoStatus.READY,
                 1,
@@ -1671,11 +2105,24 @@ class LocalProcessingManager:
                     "sampled_frames": len(frames),
                     "ocr_frames": len(ocr_items),
                     "representative_frames": len(representative_frames),
+                    "semantic_events": len(semantic_events),
                     "subtitle_corrections": subtitle_correction_count,
                 }
             )
             await self._store.update(video)
             run.status, run.finished_at, run.eta_seconds = ProcessingStatus.COMPLETED, utc_now(), 0
+            await self._append_processing_trace(
+                run,
+                event_type=TraceEventType.AGENT_COMPLETED,
+                name="timeline_curator_agent",
+                status="completed",
+                summary="多模态语义融合、章节整理与字幕审核全部完成",
+                attributes={
+                    "phase": "语义融合",
+                    "node_id": "timeline_curator_agent",
+                    "depends_on": ["speaker_analysis_agent"],
+                },
+            )
             await self._update(
                 run,
                 "ready",
@@ -1718,6 +2165,14 @@ class LocalProcessingManager:
                 )
                 await self._store.update(video)
             self._runs[run.video_id] = run.model_copy(deep=True)
+            await self._store.upsert_processing_run(run)
+            await self._emit_processing_stage(
+                run,
+                stage="failed",
+                label="处理失败",
+                progress=run.progress,
+                message=run.error or "未知错误",
+            )
 
     async def _import_web_media(self, run: ProcessingRun, video: Any) -> None:
         """下载网页媒体并接回本地处理管线，期间持续暴露真实已下载字节数。"""
