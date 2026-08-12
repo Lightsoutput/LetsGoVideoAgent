@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from lets_go_video_agent.fixtures import DEMO_VIDEO_ID
@@ -32,6 +34,16 @@ def test_public_bilibili_url_can_be_registered_metadata_only(client: TestClient)
     data = response.json()
     assert data["source"]["kind"] == "web"
     assert data["current_stage"] == "metadata_only_waiting_for_rights_confirmation"
+
+    repeated = client.post(
+        "/api/v1/videos/imports",
+        json={
+            "url": "https://www.bilibili.com/video/BV1g441147Lc/?from=another-page",
+            "rights_confirmed": False,
+        },
+    )
+    assert repeated.status_code == 202
+    assert repeated.json()["id"] == data["id"]
 
 
 def test_confirmed_web_import_creates_processing_run(client: TestClient) -> None:
@@ -89,10 +101,16 @@ def test_forced_web_answer_fails_clearly_when_search_mcp_is_disabled(
 
 
 def test_agent_trace_contains_public_steps_not_chain_of_thought(client: TestClient) -> None:
+    requested_trace_id = str(uuid4())
     answer = client.post(
         f"/api/v1/videos/{DEMO_VIDEO_ID}/questions",
-        json={"query": "视频主要讲了什么？", "target": {"kind": "global"}},
+        json={
+            "query": "视频主要讲了什么？",
+            "target": {"kind": "global"},
+            "trace_id": requested_trace_id,
+        },
     ).json()
+    assert answer["trace_id"] == requested_trace_id
     trace = client.get(f"/api/v1/agent-runs/{answer['trace_id']}")
     assert trace.status_code == 200
     data = trace.json()
@@ -140,3 +158,41 @@ def test_p1_system_observability_exposes_safe_harness_and_mcp_status(
     assert data["repository"] == "memory"
     assert all(route["configured"] for route in data["models"])
     assert "api_key" not in response.text.lower()
+
+
+def test_p2_skill_studio_publish_binding_and_runtime_trace(client: TestClient) -> None:
+    generated = client.post(
+        "/api/v1/skills/generate",
+        json={
+            "video_ids": [str(DEMO_VIDEO_ID)],
+            "goal": "理解游戏攻略的步骤、画面状态和专业术语",
+            "display_name": "游戏攻略理解",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    detail = generated.json()
+    skill_id = detail["skill"]["id"]
+    version = detail["versions"][0]
+    assert version["status"] == "draft"
+    assert version["validation"]["valid"] is True
+
+    published = client.post(f"/api/v1/skills/{skill_id}/versions/1/publish")
+    assert published.status_code == 200, published.text
+    assert published.json()["skill"]["active_version"] == 1
+
+    bound = client.post(
+        f"/api/v1/skills/{skill_id}/bindings",
+        json={"video_ids": [str(DEMO_VIDEO_ID)]},
+    )
+    assert bound.status_code == 200
+    assert str(DEMO_VIDEO_ID) in bound.json()["bound_video_ids"]
+
+    answer = client.post(
+        f"/api/v1/videos/{DEMO_VIDEO_ID}/questions",
+        json={"query": "这类攻略应该怎样理解？", "target": {"kind": "global"}},
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["skill_name"] == "游戏攻略理解"
+    trace = client.get(f"/api/v1/traces/{answer.json()['trace_id']}").json()["items"]
+    assert any(item["event_type"] == "skill.loaded" for item in trace)
+    assert any(item["event_type"] == "skill.validated" for item in trace)

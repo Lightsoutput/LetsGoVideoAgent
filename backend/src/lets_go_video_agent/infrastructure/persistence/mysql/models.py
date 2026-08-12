@@ -184,3 +184,44 @@ class UsageEventRow(Base):
     cost_cny: Mapped[Decimal] = mapped_column(Numeric(20, 9), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SkillRow(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(63), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    active_version: Mapped[int | None] = mapped_column(nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SkillVersionRow(Base):
+    __tablename__ = "skill_versions"
+    __table_args__ = (Index("ix_skill_versions_skill_version", "skill_id", "version", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    skill_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    trace_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SkillBindingRow(Base):
+    __tablename__ = "skill_bindings"
+
+    video_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("videos.id", ondelete="CASCADE"), primary_key=True
+    )
+    skill_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

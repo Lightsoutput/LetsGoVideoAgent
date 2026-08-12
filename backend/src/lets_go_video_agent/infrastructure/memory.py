@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from lets_go_video_agent.application.ports import RunRecord, TimelineRepository
-from lets_go_video_agent.domain.common import Provenance, TimeRange
+from lets_go_video_agent.domain.common import Provenance, TimeRange, utc_now
 from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
-from lets_go_video_agent.domain.processing import ProcessingRun
+from lets_go_video_agent.domain.processing import ProcessingRun, ProcessingStatus
 from lets_go_video_agent.domain.qa import (
     Answer,
     FrameTarget,
@@ -20,13 +21,15 @@ from lets_go_video_agent.domain.qa import (
     RangeTarget,
 )
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
+from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
 from lets_go_video_agent.domain.timeline import (
     Evidence,
     EvidenceKind,
     TimelineArtifact,
     TimelineKind,
 )
-from lets_go_video_agent.domain.video import Video
+from lets_go_video_agent.domain.video import Video, VideoStatus
+from lets_go_video_agent.media.video_library import resolve_video_source
 
 
 class InMemoryStore:
@@ -36,7 +39,12 @@ class InMemoryStore:
     Docker 模式会在装配点换成 MySQL/Qdrant/MinIO 实现。
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        skill_catalog_path: Path | None = None,
+        state_catalog_path: Path | None = None,
+    ) -> None:
         self.videos: dict[UUID, Video] = {}
         self.timeline: dict[UUID, list[TimelineArtifact]] = {}
         self.questions: dict[UUID, Question] = {}
@@ -47,11 +55,19 @@ class InMemoryStore:
         self.narrative_contexts: dict[UUID, NarrativeContext] = {}
         self.trace_events: dict[UUID, list[TraceEvent]] = {}
         self.usage_events: list[UsageEvent] = []
+        self.skills: dict[UUID, Skill] = {}
+        self.skill_versions: dict[UUID, list[SkillVersion]] = {}
+        self.skill_bindings: dict[UUID, SkillBinding] = {}
+        self._skill_catalog_path = skill_catalog_path
+        self._state_catalog_path = state_catalog_path
         self._lock = asyncio.Lock()
+        self._load_state_catalog()
+        self._load_skill_catalog()
 
     async def add(self, video: Video) -> None:
         async with self._lock:
             self.videos[video.id] = video.model_copy(deep=True)
+            self._persist_state_catalog()
 
     async def get(self, video_id: UUID) -> Video | None:
         video = self.videos.get(video_id)
@@ -72,6 +88,18 @@ class InMemoryStore:
             if video.id not in self.videos:
                 raise KeyError(f"video not found: {video.id}")
             self.videos[video.id] = video.model_copy(deep=True)
+            self._persist_state_catalog()
+
+    async def delete(self, video_id: UUID) -> None:
+        async with self._lock:
+            self.videos.pop(video_id, None)
+            self.timeline.pop(video_id, None)
+            self.processing_runs.pop(video_id, None)
+            self.semantic_events.pop(video_id, None)
+            self.narrative_contexts.pop(video_id, None)
+            self.skill_bindings.pop(video_id, None)
+            self._persist_state_catalog()
+            self._persist_skill_catalog()
 
     async def add_many(self, artifacts: Sequence[TimelineArtifact]) -> None:
         async with self._lock:
@@ -79,6 +107,7 @@ class InMemoryStore:
                 bucket = self.timeline.setdefault(artifact.video_id, [])
                 bucket.append(artifact.model_copy(deep=True))
                 bucket.sort(key=lambda item: (item.time_range.start_ms, item.kind.value))
+            self._persist_state_catalog()
 
     async def list_for_video(self, video_id: UUID) -> Sequence[TimelineArtifact]:
         return [item.model_copy(deep=True) for item in self.timeline.get(video_id, [])]
@@ -109,6 +138,7 @@ class InMemoryStore:
     async def upsert_processing_run(self, run: ProcessingRun) -> None:
         async with self._lock:
             self.processing_runs[run.video_id] = run.model_copy(deep=True)
+            self._persist_state_catalog()
 
     async def get_processing_run(self, video_id: UUID) -> ProcessingRun | None:
         run = self.processing_runs.get(video_id)
@@ -122,6 +152,7 @@ class InMemoryStore:
                 (event.model_copy(deep=True) for event in events),
                 key=lambda item: item.time_range.start_ms,
             )
+            self._persist_state_catalog()
 
     async def list_semantic_events(self, video_id: UUID) -> Sequence[SemanticEvent]:
         return [item.model_copy(deep=True) for item in self.semantic_events.get(video_id, [])]
@@ -129,6 +160,7 @@ class InMemoryStore:
     async def upsert_narrative_context(self, context: NarrativeContext) -> None:
         async with self._lock:
             self.narrative_contexts[context.video_id] = context.model_copy(deep=True)
+            self._persist_state_catalog()
 
     async def get_narrative_context(self, video_id: UUID) -> NarrativeContext | None:
         context = self.narrative_contexts.get(video_id)
@@ -155,11 +187,181 @@ class InMemoryStore:
             events = [item for item in events if item.video_id == video_id]
         return [item.model_copy(deep=True) for item in events]
 
+    async def upsert_skill(self, skill: Skill) -> None:
+        async with self._lock:
+            self.skills[skill.id] = skill.model_copy(deep=True)
+            self._persist_skill_catalog()
+
+    async def get_skill(self, skill_id: UUID) -> Skill | None:
+        skill = self.skills.get(skill_id)
+        return skill.model_copy(deep=True) if skill else None
+
+    async def list_skills(self) -> Sequence[Skill]:
+        return [
+            item.model_copy(deep=True)
+            for item in sorted(
+                self.skills.values(), key=lambda value: value.updated_at, reverse=True
+            )
+        ]
+
+    async def add_skill_version(self, version: SkillVersion) -> None:
+        async with self._lock:
+            bucket = self.skill_versions.setdefault(version.skill_id, [])
+            bucket[:] = [item for item in bucket if item.version != version.version]
+            bucket.append(version.model_copy(deep=True))
+            bucket.sort(key=lambda item: item.version)
+            self._persist_skill_catalog()
+
+    async def get_skill_version(self, skill_id: UUID, version: int) -> SkillVersion | None:
+        item = next(
+            (item for item in self.skill_versions.get(skill_id, []) if item.version == version),
+            None,
+        )
+        return item.model_copy(deep=True) if item else None
+
+    async def list_skill_versions(self, skill_id: UUID) -> Sequence[SkillVersion]:
+        return [item.model_copy(deep=True) for item in self.skill_versions.get(skill_id, [])]
+
+    async def upsert_skill_binding(self, binding: SkillBinding) -> None:
+        async with self._lock:
+            self.skill_bindings[binding.video_id] = binding.model_copy(deep=True)
+            self._persist_skill_catalog()
+
+    async def delete_skill_binding(self, video_id: UUID) -> None:
+        async with self._lock:
+            self.skill_bindings.pop(video_id, None)
+            self._persist_skill_catalog()
+
+    async def get_skill_binding(self, video_id: UUID) -> SkillBinding | None:
+        binding = self.skill_bindings.get(video_id)
+        return binding.model_copy(deep=True) if binding else None
+
+    async def list_skill_bindings(self, skill_id: UUID | None = None) -> Sequence[SkillBinding]:
+        items = list(self.skill_bindings.values())
+        if skill_id is not None:
+            items = [item for item in items if item.skill_id == skill_id]
+        return [item.model_copy(deep=True) for item in items]
+
     async def ping(self) -> None:
         return None
 
     async def close(self) -> None:
         return None
+
+    def _load_state_catalog(self) -> None:
+        """恢复本地视频、时间轴和处理结果，使 videos/ 真正成为可复用视频库。"""
+
+        path = self._state_catalog_path
+        if path is None or not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            for raw in payload.get("videos", []):
+                video = Video.model_validate(raw)
+                self.videos[video.id] = video
+            for raw in payload.get("timeline", []):
+                artifact = TimelineArtifact.model_validate(raw)
+                self.timeline.setdefault(artifact.video_id, []).append(artifact)
+            for items in self.timeline.values():
+                items.sort(key=lambda item: (item.time_range.start_ms, item.kind.value))
+            for raw in payload.get("processing_runs", []):
+                run = ProcessingRun.model_validate(raw)
+                if run.status in {ProcessingStatus.QUEUED, ProcessingStatus.RUNNING}:
+                    run.status = ProcessingStatus.FAILED
+                    run.error = "服务曾在任务运行时退出，请点击重新处理以从缓存继续。"
+                    run.finished_at = utc_now()
+                    restored_video = self.videos.get(run.video_id)
+                    if restored_video is not None:
+                        restored_video.status = VideoStatus.FAILED
+                        restored_video.current_stage = "interrupted"
+                        restored_video.error_message = run.error
+                self.processing_runs[run.video_id] = run
+            for raw in payload.get("semantic_events", []):
+                event = SemanticEvent.model_validate(raw)
+                self.semantic_events.setdefault(event.video_id, []).append(event)
+            for raw in payload.get("narrative_contexts", []):
+                context = NarrativeContext.model_validate(raw)
+                self.narrative_contexts[context.video_id] = context
+        except (OSError, ValueError, TypeError):
+            self.videos.clear()
+            self.timeline.clear()
+            self.processing_runs.clear()
+            self.semantic_events.clear()
+            self.narrative_contexts.clear()
+
+    def _persist_state_catalog(self) -> None:
+        path = self._state_catalog_path
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "videos": [item.model_dump(mode="json") for item in self.videos.values()],
+            "timeline": [
+                item.model_dump(mode="json")
+                for artifacts in self.timeline.values()
+                for item in artifacts
+            ],
+            "processing_runs": [
+                item.model_dump(mode="json") for item in self.processing_runs.values()
+            ],
+            "semantic_events": [
+                item.model_dump(mode="json")
+                for events in self.semantic_events.values()
+                for item in events
+            ],
+            "narrative_contexts": [
+                item.model_dump(mode="json") for item in self.narrative_contexts.values()
+            ],
+        }
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+
+    def _load_skill_catalog(self) -> None:
+        """开发态也持久化 Skill，避免每次重启都丢失人工审核结果。"""
+
+        path = self._skill_catalog_path
+        if path is None or not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            for raw in payload.get("skills", []):
+                skill = Skill.model_validate(raw)
+                self.skills[skill.id] = skill
+            for raw in payload.get("versions", []):
+                version = SkillVersion.model_validate(raw)
+                self.skill_versions.setdefault(version.skill_id, []).append(version)
+            for items in self.skill_versions.values():
+                items.sort(key=lambda value: value.version)
+            for raw in payload.get("bindings", []):
+                binding = SkillBinding.model_validate(raw)
+                self.skill_bindings[binding.video_id] = binding
+        except (OSError, ValueError, TypeError):
+            # 损坏的开发态目录不能阻止 API 启动；后续写入会生成新的合法快照。
+            self.skills.clear()
+            self.skill_versions.clear()
+            self.skill_bindings.clear()
+
+    def _persist_skill_catalog(self) -> None:
+        path = self._skill_catalog_path
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "skills": [item.model_dump(mode="json") for item in self.skills.values()],
+            "versions": [
+                item.model_dump(mode="json")
+                for versions in self.skill_versions.values()
+                for item in versions
+            ],
+            "bindings": [item.model_dump(mode="json") for item in self.skill_bindings.values()],
+        }
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
 
 def _target_window(target: QuestionTarget) -> tuple[int, int] | None:
@@ -373,12 +575,16 @@ class InMemoryFrameInspector:
         *,
         store: Any | None = None,
         data_dir: Path | None = None,
+        library_dir: Path | None = None,
         vlm: Any | None = None,
+        vlm_timeout_seconds: float = 45,
     ) -> None:
         self._retrieval = retrieval
         self._store = store
         self._data_dir = data_dir.resolve() if data_dir else None
+        self._library_dir = (library_dir or data_dir).resolve() if data_dir else None
         self._vlm = vlm
+        self._vlm_timeout_seconds = vlm_timeout_seconds
 
     async def inspect(
         self,
@@ -388,11 +594,15 @@ class InMemoryFrameInspector:
         query: str,
     ) -> Sequence[Evidence]:
         # 当前帧问答必须分析用户指定时间的真实图片，不能把附近旧证据改写成当前时间。
-        if self._store and self._data_dir and self._vlm:
+        if self._store and self._data_dir and self._library_dir and self._vlm:
             video = await self._store.get(video_id)
             if video and video.source_object_key:
-                source = (self._data_dir / video.source_object_key).resolve()
-                if self._data_dir in source.parents and source.exists():
+                source = resolve_video_source(
+                    object_key=video.source_object_key,
+                    data_dir=self._data_dir,
+                    library_dir=self._library_dir,
+                )
+                if source.exists():
                     from lets_go_video_agent.media.local_pipeline import extract_frame_at
 
                     frame_dir = self._data_dir / "frames-on-demand" / str(video_id)
@@ -401,13 +611,17 @@ class InMemoryFrameInspector:
                     if not frame_path.exists():
                         await extract_frame_at(source, frame_path, timestamp_ms)
                     try:
-                        observations = await self._vlm.analyze_frames(
-                            [{"path": frame_path, "timestamp_ms": timestamp_ms}],
-                            video_id=str(video_id),
-                            question=query,
+                        observations = await asyncio.wait_for(
+                            self._vlm.analyze_frames(
+                                [{"path": frame_path, "timestamp_ms": timestamp_ms}],
+                                video_id=str(video_id),
+                                question=query,
+                            ),
+                            timeout=self._vlm_timeout_seconds,
                         )
                     except Exception:
-                        # 云端 VLM 网络波动不能让问答接口崩溃；降级时仍只分析同一张精确帧。
+                        # 云端 VLM 超时或网络波动不能让问答接口崩溃；降级时仍只分析
+                        # 同一张精确帧，绝不拿附近的旧截图冒充当前画面。
                         from lets_go_video_agent.media.local_pipeline import run_ocr
 
                         ocr_cache = frame_dir / f"{timestamp_ms:010d}.ocr.json"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -26,6 +27,7 @@ from lets_go_video_agent.application.ports import (
     TimelineRepository,
     VideoRepository,
 )
+from lets_go_video_agent.application.skill_studio import SkillStudioService
 from lets_go_video_agent.domain.observability import TraceEventType
 from lets_go_video_agent.domain.qa import (
     Answer,
@@ -80,6 +82,19 @@ class VideoService:
         rights_confirmed: bool,
     ) -> Video:
         safe_url = self._url_policy.validate(url)
+        source_identity = _source_identity(safe_url)
+        for existing in await self._videos.list():
+            if not isinstance(existing.source, WebSource):
+                continue
+            candidate = existing.source.canonical_url or existing.source.original_url
+            if _source_identity(str(candidate)) != source_identity:
+                continue
+            # 相同网页地址复用同一条视频记录；再次确认授权时只提升授权状态。
+            if rights_confirmed and not existing.source.rights_confirmed:
+                existing.source = existing.source.model_copy(update={"rights_confirmed": True})
+                existing.current_stage = "queued_for_metadata"
+                await self._videos.update(existing)
+            return existing
         video = Video(
             title=title or "等待读取网页元数据",
             source=WebSource(
@@ -115,6 +130,13 @@ class VideoService:
         return video
 
 
+def _source_identity(url: str) -> str:
+    """忽略 B 站等页面的追踪查询参数，避免同一视频被重复登记和下载。"""
+
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+
+
 class QuestionService:
     def __init__(
         self,
@@ -125,6 +147,7 @@ class QuestionService:
         harness: AgentHarness,
         investigator: QAInvestigator,
         verifier: EvidenceVerifier,
+        skills: SkillStudioService,
         default_budget: RunBudget,
     ) -> None:
         self._videos = videos
@@ -133,6 +156,7 @@ class QuestionService:
         self._harness = harness
         self._investigator = investigator
         self._verifier = verifier
+        self._skills = skills
         self._default_budget = default_budget
         self._graph = build_qa_graph(investigator, verifier)
 
@@ -148,26 +172,32 @@ class QuestionService:
         query: str,
         target: QuestionTarget | None = None,
         conversation_id: UUID | None = None,
+        trace_id: UUID | None = None,
         use_web_search: bool = False,
     ) -> Answer:
         video = await self._videos.get(video_id)
         if video is None:
             raise NotFoundError(f"未找到视频: {video_id}")
         if use_web_search and "search_web" not in self._harness.registry.names:
-            raise ExternalServiceUnavailableError(
-                "已要求联网回答，但 Search MCP 尚未启用或不可用"
-            )
+            raise ExternalServiceUnavailableError("已要求联网回答，但 Search MCP 尚未启用或不可用")
 
+        active_skill = await self._skills.active_for_video(video_id)
+        skill, skill_version = active_skill if active_skill is not None else (None, None)
         question = Question(
             video_id=video_id,
             conversation_id=conversation_id or uuid4(),
             query=query,
             target=target or GlobalTarget(),
             use_web_search=use_web_search,
+            skill_id=skill.id if skill else None,
+            skill_version=skill_version.version if skill_version else None,
+            skill_name=skill.display_name if skill else None,
+            skill_context=(skill_version.content.runtime_instructions() if skill_version else None),
         )
         await self._answers.add_question(question)
 
         run = AgentRun(
+            id=trace_id or uuid4(),
             agent_name="video_qa_graph",
             agent_version="0.1.0",
             video_id=video_id,
@@ -175,13 +205,38 @@ class QuestionService:
             budget=self._default_budget.model_copy(deep=True),
         )
         await self._runs.add_run(run)
-        allowed_tools = set(self._investigator.allowed_tools) & set(
-            self._harness.registry.names
-        )
+        allowed_tools = set(self._investigator.allowed_tools) & set(self._harness.registry.names)
+        if skill_version is not None:
+            # Skill 权限只能与 Harness 白名单取交集，永远不能扩权。
+            allowed_tools &= set(skill_version.content.allowed_tools)
         session = self._harness.start_session(
             run=run,
             allowed_tools=allowed_tools,
         )
+        if skill is not None and skill_version is not None:
+            await session.emit(
+                TraceEventType.SKILL_LOADED,
+                name=skill.slug,
+                status="loaded",
+                summary=f"已加载 {skill.display_name} v{skill_version.version}",
+                attributes={
+                    "phase": "入口",
+                    "node_id": "skill_runtime",
+                    "skill_id": str(skill.id),
+                    "version": skill_version.version,
+                },
+            )
+            await session.emit(
+                TraceEventType.SKILL_VALIDATED,
+                name="skill_runtime_policy",
+                status="validated",
+                summary="运行时权限已与 Harness 白名单取交集",
+                attributes={
+                    "phase": "入口",
+                    "node_id": "skill_runtime",
+                    "allowed_tools": sorted(allowed_tools),
+                },
+            )
         await session.emit(
             TraceEventType.AGENT_STARTED,
             name=run.agent_name,
@@ -200,6 +255,13 @@ class QuestionService:
                 }
             )
             answer = Answer.model_validate(final_state["answer"])
+            answer = answer.model_copy(
+                update={
+                    "skill_id": question.skill_id,
+                    "skill_version": question.skill_version,
+                    "skill_name": question.skill_name,
+                }
+            )
             status = (
                 RunStatus.COMPLETED
                 if answer.status is AnswerStatus.ANSWERED
@@ -216,6 +278,9 @@ class QuestionService:
                 limitations=[str(exc)],
                 trace_id=run.id,
                 usage=session.run.usage,
+                skill_id=question.skill_id,
+                skill_version=question.skill_version,
+                skill_name=question.skill_name,
             )
         except PolicyDeniedError as exc:
             session.complete(RunStatus.POLICY_DENIED, str(exc))
@@ -226,6 +291,9 @@ class QuestionService:
                 limitations=[str(exc)],
                 trace_id=run.id,
                 usage=session.run.usage,
+                skill_id=question.skill_id,
+                skill_version=question.skill_version,
+                skill_name=question.skill_name,
             )
         except Exception as exc:
             session.complete(RunStatus.FAILED, type(exc).__name__)

@@ -28,6 +28,8 @@ test-results/
 
 # 本地媒体与模型产物（禁止提交第三方视频）
 data/
+/videos/*
+!/videos/.gitkeep
 /models/
 /ollama_models/
 artifacts/
@@ -53,3 +55,7 @@ build/
 site/
 *.log
 /var/
+
+# 用户生成 Skill：仅保留目录说明，具体版本由数据库/本地目录管理。
+/skills/generated/*
+!/skills/generated/.gitkeep

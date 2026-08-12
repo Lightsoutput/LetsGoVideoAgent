@@ -143,7 +143,78 @@ export interface Answer {
   }>;
   trace_id: string;
   usage: ModelUsage;
+  skill_id: string | null;
+  skill_version: number | null;
+  skill_name: string | null;
   created_at: string;
+}
+
+export interface SkillTerm {
+  term: string;
+  meaning: string;
+  aliases: string[];
+  verification: string;
+}
+
+export interface SkillContent {
+  applicable_video_types: string[];
+  objectives: string[];
+  terminology: SkillTerm[];
+  segmentation_hints: string[];
+  visual_focus: string[];
+  qa_strategy: string[];
+  output_requirements: string[];
+  allowed_agents: string[];
+  allowed_tools: string[];
+  allowed_mcps: string[];
+  model_guidance: string;
+  positive_examples: string[];
+  negative_examples: string[];
+  boundary_conditions: string[];
+  known_limitations: string[];
+}
+
+export interface SkillValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  checked_at: string;
+}
+
+export interface Skill {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string;
+  author: string;
+  status: "draft" | "published" | "retired";
+  active_version: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skill_id: string;
+  version: number;
+  status: "draft" | "published" | "retired";
+  content: SkillContent;
+  sample_video_ids: string[];
+  user_goal: string;
+  generation_basis: string[];
+  validation: SkillValidation;
+  trace_id: string;
+  parent_version: number | null;
+  change_summary: string;
+  artifact_path: string | null;
+  created_at: string;
+  published_at: string | null;
+}
+
+export interface SkillDetail {
+  skill: Skill;
+  versions: SkillVersion[];
+  bound_video_ids: string[];
 }
 
 export interface TraceEvent {
@@ -264,4 +335,13 @@ export interface SystemObservability {
   }>;
   repository: string;
   workflow: string;
+  runtime_components: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    status: string;
+    summary: string;
+    endpoint: string | null;
+    depends_on: string[];
+  }>;
 }

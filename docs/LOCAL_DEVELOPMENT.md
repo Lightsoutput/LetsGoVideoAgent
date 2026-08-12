@@ -1,5 +1,25 @@
 # 本地开发启动
 
+## 一键手动启动
+
+在项目根目录运行：
+
+```bat
+start-all.cmd
+```
+
+脚本会按 Docker Engine、SearXNG/Search MCP、后端 API、前端的顺序检查并启动。
+每一步都有超时，端口已被本项目占用时会跳过，不会重复启动。该脚本不会创建登录
+启动项，也没有后台 Docker 监督器；只有主动运行脚本时才会启动 Docker Desktop。
+
+状态检查（不会启动服务）：
+
+```bat
+start-all.cmd -CheckOnly
+```
+
+## 分别启动
+
 在项目根目录打开两个终端。
 
 后端：

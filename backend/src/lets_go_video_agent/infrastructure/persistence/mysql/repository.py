@@ -17,6 +17,7 @@ from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer, Question
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
+from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
 from lets_go_video_agent.domain.timeline import TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 from lets_go_video_agent.infrastructure.persistence.mysql.models import (
@@ -26,6 +27,9 @@ from lets_go_video_agent.infrastructure.persistence.mysql.models import (
     ProcessingJobRow,
     QuestionRow,
     SemanticEventRow,
+    SkillBindingRow,
+    SkillRow,
+    SkillVersionRow,
     TimelineArtifactRow,
     TraceEventRow,
     UsageEventRow,
@@ -79,6 +83,10 @@ class MySqlStore:
 
     async def update(self, video: Video) -> None:
         await self.add(video)
+
+    async def delete(self, video_id: UUID) -> None:
+        async with self.sessions.begin() as session:
+            await session.execute(delete(VideoRow).where(VideoRow.id == str(video_id)))
 
     async def add_many(self, artifacts: Sequence[TimelineArtifact]) -> None:
         async with self.sessions.begin() as session:
@@ -238,9 +246,7 @@ class MySqlStore:
     async def get_narrative_context(self, video_id: UUID) -> NarrativeContext | None:
         async with self.sessions() as session:
             row = await session.scalar(
-                select(NarrativeContextRow).where(
-                    NarrativeContextRow.video_id == str(video_id)
-                )
+                select(NarrativeContextRow).where(NarrativeContextRow.video_id == str(video_id))
             )
             return NarrativeContext.model_validate(row.payload) if row else None
 
@@ -295,6 +301,98 @@ class MySqlStore:
                 statement = statement.where(UsageEventRow.video_id == str(video_id))
             rows = (await session.scalars(statement.order_by(UsageEventRow.occurred_at))).all()
             return [UsageEvent.model_validate(row.payload) for row in rows]
+
+    async def upsert_skill(self, skill: Skill) -> None:
+        async with self.sessions.begin() as session:
+            await session.merge(
+                SkillRow(
+                    id=str(skill.id),
+                    slug=skill.slug,
+                    status=skill.status.value,
+                    active_version=skill.active_version,
+                    payload=skill.model_dump(mode="json"),
+                    created_at=skill.created_at,
+                    updated_at=skill.updated_at,
+                )
+            )
+
+    async def get_skill(self, skill_id: UUID) -> Skill | None:
+        async with self.sessions() as session:
+            row = await session.get(SkillRow, str(skill_id))
+            return Skill.model_validate(row.payload) if row else None
+
+    async def list_skills(self) -> Sequence[Skill]:
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(select(SkillRow).order_by(SkillRow.updated_at.desc()))
+            ).all()
+            return [Skill.model_validate(row.payload) for row in rows]
+
+    async def add_skill_version(self, version: SkillVersion) -> None:
+        async with self.sessions.begin() as session:
+            await session.merge(
+                SkillVersionRow(
+                    id=str(version.id),
+                    skill_id=str(version.skill_id),
+                    version=version.version,
+                    status=version.status.value,
+                    trace_id=str(version.trace_id),
+                    payload=version.model_dump(mode="json"),
+                    created_at=version.created_at,
+                    published_at=version.published_at,
+                )
+            )
+
+    async def get_skill_version(self, skill_id: UUID, version: int) -> SkillVersion | None:
+        async with self.sessions() as session:
+            row = await session.scalar(
+                select(SkillVersionRow).where(
+                    SkillVersionRow.skill_id == str(skill_id),
+                    SkillVersionRow.version == version,
+                )
+            )
+            return SkillVersion.model_validate(row.payload) if row else None
+
+    async def list_skill_versions(self, skill_id: UUID) -> Sequence[SkillVersion]:
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(SkillVersionRow)
+                    .where(SkillVersionRow.skill_id == str(skill_id))
+                    .order_by(SkillVersionRow.version)
+                )
+            ).all()
+            return [SkillVersion.model_validate(row.payload) for row in rows]
+
+    async def upsert_skill_binding(self, binding: SkillBinding) -> None:
+        async with self.sessions.begin() as session:
+            await session.merge(
+                SkillBindingRow(
+                    video_id=str(binding.video_id),
+                    skill_id=str(binding.skill_id),
+                    payload=binding.model_dump(mode="json"),
+                    created_at=binding.created_at,
+                )
+            )
+
+    async def delete_skill_binding(self, video_id: UUID) -> None:
+        async with self.sessions.begin() as session:
+            await session.execute(
+                delete(SkillBindingRow).where(SkillBindingRow.video_id == str(video_id))
+            )
+
+    async def get_skill_binding(self, video_id: UUID) -> SkillBinding | None:
+        async with self.sessions() as session:
+            row = await session.get(SkillBindingRow, str(video_id))
+            return SkillBinding.model_validate(row.payload) if row else None
+
+    async def list_skill_bindings(self, skill_id: UUID | None = None) -> Sequence[SkillBinding]:
+        async with self.sessions() as session:
+            statement = select(SkillBindingRow)
+            if skill_id is not None:
+                statement = statement.where(SkillBindingRow.skill_id == str(skill_id))
+            rows = (await session.scalars(statement.order_by(SkillBindingRow.created_at))).all()
+            return [SkillBinding.model_validate(row.payload) for row in rows]
 
     @staticmethod
     def _video_row(video: Video) -> VideoRow:

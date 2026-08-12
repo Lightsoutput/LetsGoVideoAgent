@@ -8,6 +8,7 @@ from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer, Question, QuestionTarget
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
+from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
 from lets_go_video_agent.domain.timeline import Evidence, TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 
@@ -20,6 +21,8 @@ class VideoRepository(Protocol):
     async def list(self) -> Sequence[Video]: ...
 
     async def update(self, video: Video) -> None: ...
+
+    async def delete(self, video_id: UUID) -> None: ...
 
 
 class TimelineRepository(Protocol):
@@ -109,6 +112,28 @@ class ObservabilityRepository(Protocol):
     async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]: ...
 
 
+class SkillRepository(Protocol):
+    async def upsert_skill(self, skill: Skill) -> None: ...
+
+    async def get_skill(self, skill_id: UUID) -> Skill | None: ...
+
+    async def list_skills(self) -> Sequence[Skill]: ...
+
+    async def add_skill_version(self, version: SkillVersion) -> None: ...
+
+    async def get_skill_version(self, skill_id: UUID, version: int) -> SkillVersion | None: ...
+
+    async def list_skill_versions(self, skill_id: UUID) -> Sequence[SkillVersion]: ...
+
+    async def upsert_skill_binding(self, binding: SkillBinding) -> None: ...
+
+    async def delete_skill_binding(self, video_id: UUID) -> None: ...
+
+    async def get_skill_binding(self, video_id: UUID) -> SkillBinding | None: ...
+
+    async def list_skill_bindings(self, skill_id: UUID | None = None) -> Sequence[SkillBinding]: ...
+
+
 class AppStore(
     VideoRepository,
     TimelineRepository,
@@ -117,6 +142,7 @@ class AppStore(
     ProcessingRunRepository,
     SemanticRepository,
     ObservabilityRepository,
+    SkillRepository,
     Protocol,
 ):
     """应用使用的组合仓库契约，memory 与 mysql 必须具有相同语义。"""

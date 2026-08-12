@@ -93,6 +93,7 @@ async def test_ytdlp_download_uses_browser_compatible_single_video_format(tmp_pa
         remote_enabled=True,
         max_download_bytes=1_024,
         cookies_from_browser="edge",
+        proxy_url="http://127.0.0.1:7890",
         ffmpeg_location="C:/tools/ffmpeg.exe",
         runner=fake_runner,
         dns_resolver=public_dns,
@@ -109,6 +110,7 @@ async def test_ytdlp_download_uses_browser_compatible_single_video_format(tmp_pa
     assert "--max-downloads" not in command
     assert "--cookies-from-browser" in command
     assert "--ffmpeg-location" in command
+    assert command[command.index("--proxy") + 1] == "http://127.0.0.1:7890"
     assert "vcodec^=avc" in command[command.index("--format") + 1]
 
 

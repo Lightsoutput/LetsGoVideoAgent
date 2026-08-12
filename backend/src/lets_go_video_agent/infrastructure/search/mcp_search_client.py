@@ -25,7 +25,11 @@ class McpSearchClient:
         if not isinstance(structured, dict):
             return False
         payload: Any = structured.get("result", structured)
-        return isinstance(payload, dict) and payload.get("mcp") == "ready"
+        return (
+            isinstance(payload, dict)
+            and payload.get("mcp") == "ready"
+            and payload.get("searxng") == "ready"
+        )
 
     async def search(
         self, query: str, *, limit: int = 5, language: str = "zh-CN"

@@ -8,6 +8,8 @@ import type {
   SystemObservability,
   TraceEvent,
   UsageSummary,
+  Skill,
+  SkillDetail,
 } from "@/lib/api/types";
 
 export const API_BASE =
@@ -24,13 +26,23 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...init?.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
+    });
+  } catch (reason) {
+    const detail = reason instanceof Error ? reason.message : "未知网络错误";
+    throw new ApiError(
+      `无法连接视频 Agent 后端，请检查 8000 端口和后端日志（${detail}）`,
+      0,
+      "network_error",
+    );
+  }
   if (!response.ok) {
     const problem = (await response.json().catch(() => null)) as
       | { detail?: unknown; code?: string }
@@ -67,10 +79,16 @@ export async function askVideo(
   query: string,
   target: QuestionTarget,
   useWebSearch = false,
+  traceId?: string,
 ): Promise<Answer> {
   return request<Answer>(`/videos/${videoId}/questions`, {
     method: "POST",
-    body: JSON.stringify({ query, target, use_web_search: useWebSearch }),
+    body: JSON.stringify({
+      query,
+      target,
+      use_web_search: useWebSearch,
+      trace_id: traceId,
+    }),
   });
 }
 
@@ -124,6 +142,61 @@ export async function getUsageSummary(videoId?: string): Promise<UsageSummary> {
 
 export async function getSystemObservability(): Promise<SystemObservability> {
   return request<SystemObservability>("/observability/system");
+}
+
+export async function listSkills(): Promise<Skill[]> {
+  const data = await request<{ items: Skill[] }>("/skills");
+  return data.items;
+}
+
+export async function getSkill(skillId: string): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}`);
+}
+
+export async function generateSkill(input: {
+  videoIds: string[];
+  goal: string;
+  displayName?: string;
+}): Promise<SkillDetail> {
+  return request<SkillDetail>("/skills/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      video_ids: input.videoIds,
+      goal: input.goal,
+      display_name: input.displayName || null,
+    }),
+  });
+}
+
+export async function refineSkill(
+  skillId: string,
+  instruction: string,
+  baseVersion?: number,
+): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}/refine`, {
+    method: "POST",
+    body: JSON.stringify({ instruction, base_version: baseVersion ?? null }),
+  });
+}
+
+export async function publishSkill(skillId: string, version: number): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}/versions/${version}/publish`, {
+    method: "POST",
+  });
+}
+
+export async function rollbackSkill(skillId: string, version: number): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}/rollback`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  });
+}
+
+export async function bindSkill(skillId: string, videoIds: string[]): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}/bindings`, {
+    method: "POST",
+    body: JSON.stringify({ video_ids: videoIds }),
+  });
 }
 
 export function resolveAssetUrl(url: string | null): string | null {

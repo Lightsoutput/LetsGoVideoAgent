@@ -17,17 +17,11 @@ import type {
 } from "@/lib/api/types";
 import { formatCny } from "@/lib/format";
 
-type Tab = "system" | "cost" | "trace";
+import { buildAgentGraph, buildRuntimeGraph } from "./state-machine/builders";
+import { StateMachineCanvas } from "./state-machine/StateMachineCanvas";
 
-interface WorkflowNode {
-  name: string;
-  phase: string;
-  status: string;
-  summary: string;
-  dependsOn: string[];
-  parallelGroup: string | null;
-  occurredAt: string;
-}
+type Tab = "system" | "cost" | "trace";
+type GraphView = "agents" | "runtime";
 
 interface ObservabilityPanelProps {
   open: boolean;
@@ -101,6 +95,7 @@ export function ObservabilityPanel({
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [graphView, setGraphView] = useState<GraphView>("agents");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -181,57 +176,35 @@ export function ObservabilityPanel({
     };
   }, [open, traceId, videoId]);
 
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    // 本地搜索进程可能正处于自愈窗口；面板打开时定期刷新分层健康状态，
+    // 避免一次瞬时失败永久停留为“不可用”。
+    const timer = window.setInterval(() => {
+      void getSystemObservability()
+        .then((result) => {
+          if (active) setSystem(result);
+        })
+        .catch(() => {
+          // Trace 与成本观测不因一次健康探针失败而被清空。
+        });
+    }, 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [open]);
+
   const maxModelCost = useMemo(
     () => Math.max(0, ...Object.values(usage.cost_by_model).map(Number)),
     [usage.cost_by_model],
   );
-  const workflowPhases = useMemo(() => {
-    const nodes = new Map<string, WorkflowNode>();
-    for (const event of trace) {
-      if (!event.event_type.startsWith("agent.") && !event.event_type.startsWith("workflow.")) {
-        continue;
-      }
-      const phase = typeof event.attributes.phase === "string" ? event.attributes.phase : "执行详情";
-      const nodeId = typeof event.attributes.node_id === "string" ? event.attributes.node_id : event.name;
-      const key = `${phase}:${nodeId}`;
-      const previous = nodes.get(key);
-      const status = event.event_type.endsWith("failed")
-        ? "failed"
-        : event.event_type.endsWith("completed")
-          ? "completed"
-          : event.status ?? "running";
-      nodes.set(key, {
-        name: event.name,
-        phase,
-        status,
-        summary: event.summary || previous?.summary || "正在执行",
-        dependsOn: Array.isArray(event.attributes.depends_on)
-          ? event.attributes.depends_on.map(String)
-          : previous?.dependsOn ?? [],
-        parallelGroup:
-          typeof event.attributes.parallel_group === "string"
-            ? event.attributes.parallel_group
-            : previous?.parallelGroup ?? null,
-        occurredAt: event.occurred_at,
-      });
-    }
-    const terminalStatusByName = new Map<string, string>();
-    for (const event of trace) {
-      if (event.event_type.endsWith("completed")) terminalStatusByName.set(event.name, "completed");
-      if (event.event_type.endsWith("failed")) terminalStatusByName.set(event.name, "failed");
-    }
-    for (const node of nodes.values()) {
-      const terminalStatus = terminalStatusByName.get(node.name);
-      if (terminalStatus) node.status = terminalStatus;
-    }
-    const grouped = new Map<string, WorkflowNode[]>();
-    for (const node of nodes.values()) {
-      const items = grouped.get(node.phase) ?? [];
-      items.push(node);
-      grouped.set(node.phase, items);
-    }
-    return [...grouped.entries()].map(([phase, items]) => ({ phase, items }));
-  }, [trace]);
+  const agentGraph = useMemo(
+    () => buildAgentGraph(trace, Boolean(processing && traceId === processing.trace_id)),
+    [processing, trace, traceId],
+  );
+  const runtimeGraph = useMemo(() => buildRuntimeGraph(system, trace), [system, trace]);
 
   if (!open) return null;
 
@@ -251,6 +224,13 @@ export function ObservabilityPanel({
       event.event_type === "workflow.completed" ||
       event.event_type === "workflow.failed",
   );
+  const runContext = agentRun
+    ? `问答 Agent · ${statusLabel(agentRun.status)} · ${agentRun.id.slice(0, 8)}`
+    : processing && traceId === processing.trace_id
+      ? `视频处理 Agent · ${statusLabel(processing.status)} · ${processing.trace_id.slice(0, 8)}`
+      : traceId
+        ? `Agent Trace · ${traceId.slice(0, 8)}`
+        : "系统运行底座";
 
   return (
       <aside aria-label="Agent 运行观测" className="ops-panel">
@@ -258,6 +238,7 @@ export function ObservabilityPanel({
           <div>
             <span className="eyebrow">AGENT OPERATIONS</span>
             <h2>运行观测</h2>
+            <p className="ops-run-context"><i />{runContext}</p>
           </div>
           <div className="ops-header-actions">
             <button disabled={loading} onClick={() => void refresh()} type="button">
@@ -271,7 +252,7 @@ export function ObservabilityPanel({
           {([
             ["system", "系统与 Harness"],
             ["cost", "成本中心"],
-            ["trace", `Agent Trace${traceId ? " · 当前" : ""}`],
+            ["trace", `状态机与 Trace${traceId ? " · 当前" : ""}`],
           ] as const).map(([value, label]) => (
             <button
               className={tab === value ? "active" : ""}
@@ -344,6 +325,20 @@ export function ObservabilityPanel({
                 </dl>
                 <div className="tool-chips">
                   {system?.mcp.tools.map((tool) => <code key={tool}>{tool}</code>)}
+                </div>
+              </section>
+
+              <section className="ops-card ops-card-wide">
+                <div className="ops-card-title"><strong>运行组件分层诊断</strong><span>故障点可直接定位</span></div>
+                <div className="runtime-health-grid">
+                  {system?.runtime_components.map((component) => (
+                    <article className={`runtime-health status-${component.status}`} key={component.id}>
+                      <div><i /><strong>{component.name}</strong><span>{statusLabel(component.status)}</span></div>
+                      <p>{component.summary}</p>
+                      {component.endpoint && <code title={component.endpoint}>{component.endpoint}</code>}
+                    </article>
+                  ))}
+                  {!system && <p>正在检查 Harness、记忆、MCP、模型与 Trace Store…</p>}
                 </div>
               </section>
 
@@ -426,52 +421,32 @@ export function ObservabilityPanel({
               )}
               {!traceId && <div className="ops-empty">上传或选择正在处理的视频后，即可实时查看 Agent Trace；问答 Trace 也会显示在这里。</div>}
               {traceId && trace.length === 0 && !loading && <div className="ops-empty">该运行暂无 Trace 事件。</div>}
-              {workflowPhases.length > 0 && (
-                <section className="workflow-map" aria-label="Agent 工作流程">
-                  <div className="ops-card-title">
-                    <strong>Agent 工作流程</strong>
-                    <span>同列节点并行 · 箭头方向为依赖顺序</span>
-                  </div>
-                  <div className="workflow-columns">
-                    {workflowPhases.map(({ phase, items }, phaseIndex) => (
-                      <div className="workflow-phase" key={phase}>
-                        <header><b>{String(phaseIndex + 1).padStart(2, "0")}</b>{phase}</header>
-                        <div>
-                          {items.map((node) => (
-                            <article className={`workflow-node status-${node.status}`} key={`${phase}:${node.name}`}>
-                              <div>
-                                <i />
-                                <strong>{node.name}</strong>
-                                <time>{new Date(node.occurredAt).toLocaleTimeString()}</time>
-                              </div>
-                              <p>{node.summary}</p>
-                              {node.parallelGroup && <span>并行组 · {node.parallelGroup}</span>}
-                              {node.dependsOn.length > 0 && <small>依赖：{node.dependsOn.join("、")}</small>}
-                            </article>
-                          ))}
-                        </div>
-                        {phaseIndex < workflowPhases.length - 1 && <em className="workflow-arrow">→</em>}
+              <div className="graph-view-switch" role="tablist" aria-label="状态机类型">
+                <button className={graphView === "agents" ? "active" : ""} onClick={() => setGraphView("agents")} role="tab" type="button">多 Agent 工作流</button>
+                <button className={graphView === "runtime" ? "active" : ""} onClick={() => setGraphView("runtime")} role="tab" type="button">Harness · 记忆 · MCP</button>
+              </div>
+              <StateMachineCanvas graph={graphView === "agents" ? agentGraph : runtimeGraph} />
+              <details className="trace-event-log">
+                <summary><strong>原始 Trace 事件</strong><span>{trace.length} 条 · 用于逐步审计</span></summary>
+                <div>
+                  {trace.map((event) => (
+                    <article className={`trace-event trace-${event.event_type.split(".")[0]}`} key={event.id}>
+                      <div className="trace-sequence">{String(event.sequence).padStart(2, "0")}</div>
+                      <div className="trace-detail">
+                        <div><span>{eventLabel(event.event_type)}</span><time>{new Date(event.occurred_at).toLocaleTimeString()}</time></div>
+                        <strong>{event.name}</strong>
+                        <p>{event.summary || "无公开摘要"}</p>
+                        {Object.keys(event.attributes).length > 0 && (
+                          <details><summary>结构化属性</summary><pre>{JSON.stringify(event.attributes, null, 2)}</pre></details>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-              {trace.map((event) => (
-                <article className={`trace-event trace-${event.event_type.split(".")[0]}`} key={event.id}>
-                  <div className="trace-sequence">{String(event.sequence).padStart(2, "0")}</div>
-                  <div className="trace-detail">
-                    <div><span>{eventLabel(event.event_type)}</span><time>{new Date(event.occurred_at).toLocaleTimeString()}</time></div>
-                    <strong>{event.name}</strong>
-                    <p>{event.summary || "无公开摘要"}</p>
-                    {Object.keys(event.attributes).length > 0 && (
-                      <details><summary>结构化属性</summary><pre>{JSON.stringify(event.attributes, null, 2)}</pre></details>
-                    )}
-                  </div>
-                  <span className={`trace-status status-${event.status ?? "unknown"}`}>
-                    {statusLabel(event.status ?? "--")}
-                  </span>
-                </article>
-              ))}
+                      <span className={`trace-status status-${event.status ?? "unknown"}`}>
+                        {statusLabel(event.status ?? "--")}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              </details>
             </div>
           )}
         </div>

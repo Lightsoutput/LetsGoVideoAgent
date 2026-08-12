@@ -20,6 +20,7 @@ interface ChatPanelProps {
   activeRange: TimeRange | null;
   onSeek(timestampMs: number): void;
   onAnswer?(answer: Answer): void;
+  onTraceStarted?(traceId: string): void;
   onOpenTrace?(traceId: string): void;
 }
 
@@ -30,6 +31,7 @@ interface ConversationTurn {
   status: "pending" | "completed" | "failed";
   error?: string;
   useWebSearch: boolean;
+  traceId: string;
 }
 
 const QUICK_QUESTIONS = [
@@ -76,6 +78,7 @@ export function ChatPanel({
   activeRange,
   onSeek,
   onAnswer,
+  onTraceStarted,
   onOpenTrace,
 }: ChatPanelProps) {
   const [query, setQuery] = useState("");
@@ -115,9 +118,12 @@ export function ChatPanel({
     const submittedQuery = query.trim();
     const submittedUseWebSearch = useWebSearch;
     const turnId = crypto.randomUUID();
+    const traceId = crypto.randomUUID();
     setQuery("");
     setBusy(true);
     setError(null);
+    // Trace ID 由前端预生成，问题刚发出即可实时查看 Agent，而不是等回答完成后才看到历史记录。
+    onTraceStarted?.(traceId);
     // 先把用户消息放进对话区；网络请求在其后进行，长时间思考时用户也能确认已发送。
     setTurns((items) => [
       ...items,
@@ -126,6 +132,7 @@ export function ChatPanel({
         question: submittedQuery,
         status: "pending",
         useWebSearch: submittedUseWebSearch,
+        traceId,
       },
     ]);
     try {
@@ -134,6 +141,7 @@ export function ChatPanel({
         submittedQuery,
         buildTarget(),
         submittedUseWebSearch,
+        traceId,
       );
       onAnswer?.(answer);
       setTurns((items) =>
@@ -241,22 +249,36 @@ export function ChatPanel({
           </div>
         )}
 
-        {turns.map(({ id, question, answer, status, error: turnError, useWebSearch: turnUsesWeb }) => {
+        {turns.map(({ id, question, answer, status, error: turnError, useWebSearch: turnUsesWeb, traceId }) => {
           if (!answer) {
             return (
               <div className="conversation-turn" key={id}>
                 <div className="user-message">
-                  {turnUsesWeb && <small>🌐 强制联网</small>}
+                  {turnUsesWeb && <small>🌐 联网检索</small>}
                   {question}
                 </div>
                 {status === "pending" ? (
                   <div className="agent-thinking turn-thinking">
                     <i />
-                    <span>已收到问题，正在检索全片证据并组织回答…</span>
+                    <span>问答 Agent 正在并行检查视频证据、当前画面与联网资料…</span>
+                    <button
+                      className="live-trace-button"
+                      onClick={() => onOpenTrace?.(traceId)}
+                      type="button"
+                    >
+                      实时查看 Agent
+                    </button>
                   </div>
                 ) : (
                   <div className="agent-message failed-message">
                     回答失败：{turnError ?? "未知错误"}
+                    <button
+                      className="live-trace-button"
+                      onClick={() => onOpenTrace?.(traceId)}
+                      type="button"
+                    >
+                      查看失败节点
+                    </button>
                   </div>
                 )}
               </div>
@@ -279,6 +301,11 @@ export function ChatPanel({
                       : "证据不足"}
                 </span>
                 <span>{Math.round(answer.confidence * 100)}% 置信度</span>
+                {answer.skill_name && (
+                  <span title="本次回答已加载人工发布的领域 Skill">
+                    ◇ {answer.skill_name} v{answer.skill_version}
+                  </span>
+                )}
               </div>
               <p className="answer-text">{answer.text}</p>
               {citations.length > 0 && (

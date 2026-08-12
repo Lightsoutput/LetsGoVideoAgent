@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateRange(1, 365)]
     [int]$RetentionDays = 14,
     [switch]$WhatIf

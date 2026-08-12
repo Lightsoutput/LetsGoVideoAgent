@@ -13,6 +13,8 @@ def client(tmp_path) -> Iterator[TestClient]:
         repository_backend="memory",
         seed_demo_data=True,
         local_data_dir=tmp_path / "data",
+        video_library_dir=tmp_path / "videos",
+        skill_artifact_dir=tmp_path / "skills" / "generated",
         llm_provider="mock",
         llm_api_key=None,
         vlm_provider="mock",

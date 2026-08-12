@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
@@ -15,12 +16,18 @@ from lets_go_video_agent.agents.harness.models import AgentRun
 from lets_go_video_agent.api.dependencies import get_container
 from lets_go_video_agent.api.schemas import (
     AskQuestionRequest,
+    BindSkillRequest,
+    GenerateSkillRequest,
     HarnessPolicyResponse,
     HealthResponse,
     McpStatusResponse,
     ModelRouteResponse,
     NarrativeContextResponse,
+    RefineSkillRequest,
+    RollbackSkillRequest,
+    RuntimeComponentResponse,
     SemanticEventsResponse,
+    SkillListResponse,
     SystemObservabilityResponse,
     TimelineResponse,
     TraceEventsResponse,
@@ -31,9 +38,25 @@ from lets_go_video_agent.api.schemas import (
 from lets_go_video_agent.bootstrap import Container
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer
+from lets_go_video_agent.domain.skill import SkillDetail
 from lets_go_video_agent.domain.video import Video
+from lets_go_video_agent.media.video_library import resolve_video_source
 
 router = APIRouter()
+
+
+async def _searxng_health(api_base: str) -> bool:
+    """直接检查搜索引擎层，让 UI 能区分 SearXNG 故障与 MCP 协议故障。"""
+
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get(
+                f"{api_base.rstrip('/')}/search",
+                params={"q": "LetsGoVideoAgent", "format": "json"},
+            )
+        return response.status_code == 200
+    except httpx.HTTPError:
+        return False
 
 
 async def _local_video_path(video_id: UUID, container: Container) -> Path:
@@ -42,9 +65,15 @@ async def _local_video_path(video_id: UUID, container: Container) -> Path:
     video = await container.videos.get_video(video_id)
     if not video.source_object_key:
         raise HTTPException(status_code=404, detail="该视频没有可播放的本地媒体")
-    root = container.settings.local_data_dir.resolve()
-    target = (root / video.source_object_key).resolve()
-    if root not in target.parents or not target.exists():
+    try:
+        target = resolve_video_source(
+            object_key=video.source_object_key,
+            data_dir=container.settings.local_data_dir,
+            library_dir=container.settings.video_library_dir,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="媒体文件路径无效") from exc
+    if not target.exists():
         raise HTTPException(status_code=404, detail="媒体文件不存在")
     return target
 
@@ -75,6 +104,111 @@ async def list_videos(
     return VideoListResponse(items=await container.videos.list_videos())
 
 
+@router.get("/skills", response_model=SkillListResponse, tags=["skills"])
+async def list_skills(
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillListResponse:
+    return SkillListResponse(items=await container.skills.list_skills())
+
+
+@router.post(
+    "/skills/generate",
+    response_model=SkillDetail,
+    status_code=status.HTTP_201_CREATED,
+    tags=["skills"],
+)
+async def generate_skill(
+    payload: GenerateSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.generate(
+        video_ids=payload.video_ids,
+        user_goal=payload.goal,
+        display_name=payload.display_name,
+    )
+
+
+@router.get("/skills/{skill_id}", response_model=SkillDetail, tags=["skills"])
+async def get_skill(
+    skill_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.get(skill_id)
+
+
+@router.post(
+    "/skills/{skill_id}/refine",
+    response_model=SkillDetail,
+    status_code=status.HTTP_201_CREATED,
+    tags=["skills"],
+)
+async def refine_skill(
+    skill_id: UUID,
+    payload: RefineSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.refine(
+        skill_id=skill_id,
+        instruction=payload.instruction,
+        base_version=payload.base_version,
+    )
+
+
+@router.post(
+    "/skills/{skill_id}/versions/{version}/publish",
+    response_model=SkillDetail,
+    tags=["skills"],
+)
+async def publish_skill(
+    skill_id: UUID,
+    version: int,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.publish(skill_id, version)
+
+
+@router.post("/skills/{skill_id}/rollback", response_model=SkillDetail, tags=["skills"])
+async def rollback_skill(
+    skill_id: UUID,
+    payload: RollbackSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.rollback(skill_id, payload.version)
+
+
+@router.post("/skills/{skill_id}/bindings", response_model=SkillDetail, tags=["skills"])
+async def bind_skill(
+    skill_id: UUID,
+    payload: BindSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    return await container.skills.bind(skill_id, payload.video_ids)
+
+
+@router.get("/videos/{video_id}/skill", response_model=SkillDetail, tags=["skills"])
+async def get_video_skill(
+    video_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    active = await container.skills.active_for_video(video_id)
+    if active is None:
+        raise HTTPException(status_code=404, detail="该视频未绑定已发布 Skill")
+    return await container.skills.get(active[0].id)
+
+
+@router.delete(
+    "/videos/{video_id}/skill",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["skills"],
+)
+async def unbind_video_skill(
+    video_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> Response:
+    await container.skills.unbind(video_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/videos/{video_id}", response_model=Video, tags=["videos"])
 async def get_video(
     video_id: UUID,
@@ -98,7 +232,7 @@ async def import_video(
         title=payload.title,
         rights_confirmed=payload.rights_confirmed,
     )
-    if payload.rights_confirmed:
+    if payload.rights_confirmed and video.status != "ready":
         container.processing.start(video.id)
     return video
 
@@ -185,14 +319,50 @@ async def get_observability_system(
 
     settings = container.settings
     budget = container.questions.default_budget
-    if container.search is None:
+    search_client = container.search
+    if search_client is None:
         mcp_status = "disabled"
+        searxng_status = "disabled"
     else:
-        try:
-            healthy = await asyncio.wait_for(container.search.health(), timeout=4)
-            mcp_status = "ready" if healthy else "unavailable"
-        except TimeoutError:
-            mcp_status = "unavailable"
+
+        async def check_mcp_with_retry() -> bool:
+            # MCP Streamable HTTP 会话在监督器并发探测或刚完成自愈时可能瞬时失败；
+            # 短间隔重试一次，避免把健康服务错误显示为“不可用”。
+            for attempt in range(2):
+                try:
+                    if await asyncio.wait_for(search_client.health(), timeout=5):
+                        return True
+                except TimeoutError:
+                    pass
+                if attempt == 0:
+                    await asyncio.sleep(0.3)
+            return False
+
+        mcp_result, searxng_result = await asyncio.gather(
+            check_mcp_with_retry(),
+            asyncio.wait_for(_searxng_health(settings.search_api_base), timeout=4),
+            return_exceptions=True,
+        )
+        mcp_status = "ready" if mcp_result is True else "unavailable"
+        # search_health 工具本身会访问下游 SearXNG；MCP 检查成功时可直接证明
+        # 搜索引擎可用，避免独立 HTTP 探针偶发超时造成相互矛盾的状态。
+        searxng_status = "ready" if searxng_result is True or mcp_result is True else "unavailable"
+
+    model_routes = [
+        ModelRouteResponse(
+            capability="text_reasoning",
+            provider=settings.llm_provider,
+            model=settings.llm_model,
+            configured=settings.llm_provider == "mock" or bool(settings.llm_api_key),
+        ),
+        ModelRouteResponse(
+            capability="visual_understanding",
+            provider=settings.vlm_provider,
+            model=settings.vlm_model,
+            configured=settings.vlm_provider in {"mock", "ollama"} or bool(settings.vlm_api_key),
+        ),
+    ]
+    skill_count = len(await container.skills.list_skills())
     return SystemObservabilityResponse(
         harness=HarnessPolicyResponse(
             max_steps=budget.max_steps,
@@ -214,23 +384,78 @@ async def get_observability_system(
                 else []
             ),
         ),
-        models=[
-            ModelRouteResponse(
-                capability="text_reasoning",
-                provider=settings.llm_provider,
-                model=settings.llm_model,
-                configured=settings.llm_provider == "mock" or bool(settings.llm_api_key),
-            ),
-            ModelRouteResponse(
-                capability="visual_understanding",
-                provider=settings.vlm_provider,
-                model=settings.vlm_model,
-                configured=settings.vlm_provider in {"mock", "ollama"}
-                or bool(settings.vlm_api_key),
-            ),
-        ],
+        models=model_routes,
         repository=settings.repository_backend,
         workflow=settings.workflow_backend,
+        runtime_components=[
+            RuntimeComponentResponse(
+                id="harness",
+                name="Agent Harness",
+                kind="harness",
+                status="ready",
+                summary="预算、工具白名单、参数校验与截止时间策略已装载",
+            ),
+            RuntimeComponentResponse(
+                id="memory",
+                name="视频记忆",
+                kind="memory",
+                status="ready",
+                summary=f"{settings.repository_backend} Repository 已连接",
+                depends_on=["harness"],
+            ),
+            RuntimeComponentResponse(
+                id="searxng",
+                name="SearXNG",
+                kind="search",
+                status=searxng_status,
+                summary=(
+                    "搜索引擎可用"
+                    if searxng_status == "ready"
+                    else "搜索引擎未响应，请运行 scripts/start-searxng.ps1"
+                ),
+                endpoint=(settings.search_api_base if container.search is not None else None),
+            ),
+            RuntimeComponentResponse(
+                id="search_mcp",
+                name="Search MCP",
+                kind="mcp",
+                status=mcp_status,
+                summary=(
+                    "MCP 协议与搜索工具可调用"
+                    if mcp_status == "ready"
+                    else "MCP 未连接；先确认 SearXNG，再检查 8090 端口"
+                ),
+                endpoint=(settings.search_mcp_url if container.search is not None else None),
+                depends_on=["searxng"],
+            ),
+            *[
+                RuntimeComponentResponse(
+                    id=f"model_{route.capability}",
+                    name="文本推理模型" if route.capability == "text_reasoning" else "视觉理解模型",
+                    kind="model",
+                    status="ready" if route.configured else "unavailable",
+                    summary=f"{route.provider} / {route.model}",
+                    depends_on=["harness"],
+                )
+                for route in model_routes
+            ],
+            RuntimeComponentResponse(
+                id="trace_store",
+                name="Trace Store",
+                kind="trace",
+                status="ready",
+                summary="运行事件可实时记录与回放",
+                depends_on=["harness"],
+            ),
+            RuntimeComponentResponse(
+                id="skill_runtime",
+                name="Skill Runtime",
+                kind="skill",
+                status="ready",
+                summary=f"已登记 {skill_count} 个领域 Skill；仅已发布版本可注入运行时",
+                depends_on=["harness", "memory"],
+            ),
+        ],
     )
 
 
@@ -351,6 +576,7 @@ async def ask_video(
         query=payload.query,
         target=payload.target,
         conversation_id=payload.conversation_id,
+        trace_id=payload.trace_id,
         use_web_search=payload.use_web_search,
     )
 

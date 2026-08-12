@@ -42,6 +42,7 @@ class SiliconFlowVisionClient:
             response = await client.get(
                 f"{self._api_base}/user/info",
                 headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=5,
             )
             response.raise_for_status()
             value = (response.json().get("data") or {}).get("totalBalance")

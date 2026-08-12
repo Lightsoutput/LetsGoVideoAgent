@@ -18,9 +18,16 @@ class LocalUploadStore:
     生产环境会把相同接口替换为 MinIO/S3。
     """
 
-    def __init__(self, root: Path, max_bytes: int) -> None:
+    def __init__(
+        self,
+        root: Path,
+        max_bytes: int,
+        *,
+        object_key_prefix: str = "",
+    ) -> None:
         self.root = root.resolve()
         self.max_bytes = max_bytes
+        self.object_key_prefix = object_key_prefix.strip("/")
 
     async def save(self, upload: UploadFile) -> tuple[str, int, str]:
         suffix = Path(upload.filename or "").suffix.lower()
@@ -48,4 +55,7 @@ class LocalUploadStore:
             raise
         finally:
             await upload.close()
-        return relative_key.as_posix(), size, digest.hexdigest()
+        key = relative_key.as_posix()
+        if self.object_key_prefix:
+            key = f"{self.object_key_prefix}/{key}"
+        return key, size, digest.hexdigest()

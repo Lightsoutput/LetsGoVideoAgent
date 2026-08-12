@@ -55,6 +55,11 @@ class Question(DomainModel):
     target: QuestionTarget = Field(default_factory=GlobalTarget)
     requested_evidence_types: list[EvidenceKind] = Field(default_factory=list)
     use_web_search: bool = False
+    # 仅保存已发布 Skill 的压缩运行时上下文；草案永远不会进入问答。
+    skill_id: UUID | None = None
+    skill_version: int | None = Field(default=None, ge=1)
+    skill_name: str | None = Field(default=None, max_length=120)
+    skill_context: str | None = Field(default=None, max_length=8_000)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -90,6 +95,9 @@ class Answer(DomainModel):
     web_sources: list[WebReference] = Field(default_factory=list)
     trace_id: UUID
     usage: ModelUsage = Field(default_factory=ModelUsage)
+    skill_id: UUID | None = None
+    skill_version: int | None = Field(default=None, ge=1)
+    skill_name: str | None = Field(default=None, max_length=120)
     created_at: datetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")

@@ -33,8 +33,10 @@ class Settings(BaseSettings):
 
     repository_backend: str = "memory"
     workflow_backend: str = "inline"
-    seed_demo_data: bool = True
+    seed_demo_data: bool = False
     local_data_dir: Path = Path("./data")
+    video_library_dir: Path = Path("./videos")
+    skill_artifact_dir: Path = Path("./skills/generated")
     enable_remote_downloads: bool = False
     ytdlp_cookies_from_browser: str | None = None
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
@@ -62,6 +64,9 @@ class Settings(BaseSettings):
     vlm_model: str = "mock-vision-model"
     vlm_api_base: str = "http://127.0.0.1:11434"
     vlm_api_key: str | None = None
+    # 即时帧问答允许云端 VLM 充分推理，但必须在 Agent 总时限前留下 OCR 降级时间。
+    frame_vlm_timeout_seconds: float = Field(default=45, ge=5, le=180)
+    frame_tool_timeout_seconds: float = Field(default=65, ge=10, le=240)
     search_provider: str = "disabled"
     search_api_base: str = "http://127.0.0.1:8888"
     search_mcp_host: str = "127.0.0.1"
@@ -84,6 +89,18 @@ class Settings(BaseSettings):
     @classmethod
     def resolve_local_data_dir(cls, value: Path) -> Path:
         """相对数据目录固定基于项目根目录，不随启动命令所在目录变化。"""
+        return value.resolve() if value.is_absolute() else (PROJECT_ROOT / value).resolve()
+
+    @field_validator("skill_artifact_dir", mode="after")
+    @classmethod
+    def resolve_skill_artifact_dir(cls, value: Path) -> Path:
+        return value.resolve() if value.is_absolute() else (PROJECT_ROOT / value).resolve()
+
+    @field_validator("video_library_dir", mode="after")
+    @classmethod
+    def resolve_video_library_dir(cls, value: Path) -> Path:
+        """持久视频统一放在项目 videos/，与缓存和日志目录分离。"""
+
         return value.resolve() if value.is_absolute() else (PROJECT_ROOT / value).resolve()
 
     @property

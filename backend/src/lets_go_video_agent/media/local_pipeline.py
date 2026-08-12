@@ -28,6 +28,7 @@ from lets_go_video_agent.infrastructure.models.siliconflow_vision_client import 
 )
 from lets_go_video_agent.infrastructure.search.mcp_search_client import McpSearchClient
 from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClient
+from lets_go_video_agent.media.video_library import library_object_key, resolve_video_source
 from lets_go_video_agent.media.ytdlp import YtDlpAdapter
 
 # 修改分析策略后递增，避免旧字幕、视觉理解和分段结果继续污染新任务。
@@ -104,10 +105,10 @@ def extract_keyframes(
             if frame is None:
                 continue
             frame_path = output_dir / f"{timestamp_ms:010d}.jpg"
-            image = frame.to_image()
+            image = frame.to_image()  # type: ignore[no-untyped-call]
             # OCR 不需要保留 1080p/4K 原始分辨率；限制长边可显著降低 CPU 推理时间。
             image.thumbnail((1280, 1280))
-            image.save(frame_path, quality=88)  # type: ignore[no-untyped-call]
+            image.save(frame_path, quality=88)
             result.append({"timestamp_ms": timestamp_ms, "path": frame_path})
     return result
 
@@ -815,9 +816,7 @@ def build_semantic_understanding(
             for item in visual_items
             if chapter.time_range.contains(int(item.get("timestamp_ms", -1)))
         ]
-        participants = list(
-            dict.fromkeys(item.speaker for item in linked if item.speaker)
-        )
+        participants = list(dict.fromkeys(item.speaker for item in linked if item.speaker))
         entities = list(
             dict.fromkeys(
                 str(entity).strip()
@@ -855,9 +854,9 @@ def build_semantic_understanding(
             )
         )
 
-    normalized_summary = overall_summary.strip() or "；".join(
-        event.summary for event in events
-    )[:4_000]
+    normalized_summary = (
+        overall_summary.strip() or "；".join(event.summary for event in events)[:4_000]
+    )
     normalized_purpose = purpose.strip() or f"围绕“{events[0].title}”组织并呈现视频内容。"
     all_participants = list(
         dict.fromkeys(participant for event in events for participant in event.participants)
@@ -1112,12 +1111,14 @@ class LocalProcessingManager:
         data_dir: Path,
         asr_model: str,
         llm: DeepSeekClient | None,
+        library_dir: Path | None = None,
         vlm: OllamaVisionClient | SiliconFlowVisionClient | None = None,
         web_search: McpSearchClient | SearxngClient | None = None,
         web_downloader: YtDlpAdapter | None = None,
     ) -> None:
         self._store = store
         self._data_dir = data_dir.resolve()
+        self._library_dir = (library_dir or data_dir).resolve()
         self._asr_model = asr_model
         self._llm = llm
         self._vlm = vlm
@@ -1345,9 +1346,7 @@ class LocalProcessingManager:
     ) -> list[dict[str, Any]]:
         """音频分支：优先复用字幕轨/缓存，否则运行 Whisper。"""
         if await asyncio.to_thread(transcript_cache.exists):
-            cached_text = await asyncio.to_thread(
-                transcript_cache.read_text, encoding="utf-8"
-            )
+            cached_text = await asyncio.to_thread(transcript_cache.read_text, encoding="utf-8")
             transcript = list(json.loads(cached_text))
         else:
             source_subtitles = await asyncio.to_thread(load_sidecar_subtitles, source)
@@ -1358,8 +1357,7 @@ class LocalProcessingManager:
                 transcript = await asyncio.to_thread(transcribe, source, self._asr_model)
                 video.metadata["transcript_source"] = "faster-whisper"
         transcript = [
-            {**item, "text": normalize_chinese_text(str(item["text"]))}
-            for item in transcript
+            {**item, "text": normalize_chinese_text(str(item["text"]))} for item in transcript
         ]
         await asyncio.to_thread(
             transcript_cache.write_text,
@@ -1402,9 +1400,7 @@ class LocalProcessingManager:
         visual_items: list[dict[str, Any]] = []
         if await asyncio.to_thread(visual_cache.exists):
             try:
-                cached_text = await asyncio.to_thread(
-                    visual_cache.read_text, encoding="utf-8"
-                )
+                cached_text = await asyncio.to_thread(visual_cache.read_text, encoding="utf-8")
                 visual_items = list(json.loads(cached_text))
             except (json.JSONDecodeError, OSError, TypeError):
                 visual_items = []
@@ -1452,6 +1448,48 @@ class LocalProcessingManager:
             video = await self._store.get(run.video_id)
             if video is None:
                 raise FileNotFoundError("视频记录不存在")
+            skill_context = ""
+            skill_binding = await self._store.get_skill_binding(video.id)
+            if skill_binding is not None:
+                skill = await self._store.get_skill(skill_binding.skill_id)
+                if skill is not None and skill.active_version is not None:
+                    skill_version = await self._store.get_skill_version(
+                        skill.id, skill.active_version
+                    )
+                    if skill_version is not None and skill_version.status.value == "published":
+                        skill_context = skill_version.content.runtime_instructions()
+                        video.metadata["active_skill"] = {
+                            "id": str(skill.id),
+                            "name": skill.display_name,
+                            "version": skill_version.version,
+                        }
+                        await self._append_processing_trace(
+                            run,
+                            event_type=TraceEventType.SKILL_LOADED,
+                            name=skill.slug,
+                            status="loaded",
+                            summary=(
+                                f"已加载 {skill.display_name} v{skill_version.version}，"
+                                "将用于分段、视觉理解和摘要策略"
+                            ),
+                            attributes={
+                                "phase": "入口",
+                                "node_id": "skill_runtime",
+                                "skill_id": str(skill.id),
+                                "version": skill_version.version,
+                            },
+                        )
+                        await self._append_processing_trace(
+                            run,
+                            event_type=TraceEventType.SKILL_VALIDATED,
+                            name="skill_runtime_policy",
+                            status="validated",
+                            summary="已验证 Skill 只补充分析规则，不扩展 Worker 权限",
+                            attributes={
+                                "phase": "入口",
+                                "node_id": "skill_runtime",
+                            },
+                        )
             # 新一轮重试开始时清除上一轮错误，避免页面同时显示“处理中”和旧异常。
             video.error_code = None
             video.error_message = None
@@ -1462,8 +1500,12 @@ class LocalProcessingManager:
                 video = await self._store.get(run.video_id)
             if video is None or not video.source_object_key:
                 raise FileNotFoundError("视频源文件不存在")
-            source = (self._data_dir / video.source_object_key).resolve()
-            if self._data_dir not in source.parents or not source.exists():
+            source = resolve_video_source(
+                object_key=video.source_object_key,
+                data_dir=self._data_dir,
+                library_dir=self._library_dir,
+            )
+            if not source.exists():
                 raise FileNotFoundError("视频源文件不存在或路径越界")
 
             await self._update(run, "probing", "读取媒体信息", 0.05, "正在读取时长、分辨率和编码")
@@ -1601,9 +1643,7 @@ class LocalProcessingManager:
                 speaker_labels: list[str] = []
                 if speaker_cache.exists():
                     try:
-                        speaker_labels = list(
-                            json.loads(speaker_cache.read_text(encoding="utf-8"))
-                        )
+                        speaker_labels = list(json.loads(speaker_cache.read_text(encoding="utf-8")))
                     except (json.JSONDecodeError, OSError, TypeError):
                         speaker_labels = []
                 if len(speaker_labels) != len(transcript):
@@ -1796,6 +1836,13 @@ class LocalProcessingManager:
                             '"subtitle_corrections":[]}。章节必须连续覆盖全片，标题体现具体主题。'
                             "若字幕明确声明有N条建议/要点并出现第一、第二等序号，必须为每一条单独分章，"
                             "不得把多个编号合并；任何专有名词都应综合字幕、画面和上下文核验。"
+                            + (
+                                "\n以下是用户审核发布的领域 Skill，只能补充分析维度；"
+                                "与直接视频证据冲突时以证据为准：\n"
+                                f"{skill_context}"
+                                if skill_context
+                                else ""
+                            )
                         ),
                         user=compact[:100_000],
                         purpose="video_timeline_summary",
@@ -1808,9 +1855,7 @@ class LocalProcessingManager:
                     video.metadata["llm_summary_error"] = type(exc).__name__
                     summary = {"summary": "", "chapters": []}
                 video.metadata["summary"] = str(summary.get("summary", ""))
-                video.metadata["video_format"] = str(
-                    summary.get("video_format") or "general_video"
-                )
+                video.metadata["video_format"] = str(summary.get("video_format") or "general_video")
                 video.metadata["video_purpose"] = str(summary.get("purpose") or "")
                 quick_questions = []
                 for item in summary.get("quick_questions", [])[:5]:
@@ -2212,7 +2257,7 @@ class LocalProcessingManager:
                 rights_confirmed=source.rights_confirmed,
             )
         )
-        job_dir = self._data_dir / "web-imports" / str(video.id)
+        job_dir = self._library_dir / str(video.id)
         while not download_task.done():
             downloaded = await asyncio.to_thread(_directory_size, job_dir)
             estimated = metadata.estimated_size_bytes
@@ -2228,8 +2273,10 @@ class LocalProcessingManager:
             await self._update(run, "downloading", "下载并合并网页视频", progress, detail)
             await asyncio.sleep(1)
         downloaded_media = await download_task
-        relative_key = downloaded_media.path.relative_to(self._data_dir).as_posix()
-        video.source_object_key = relative_key
+        video.source_object_key = library_object_key(
+            downloaded_media.path,
+            self._library_dir,
+        )
         video.metadata.update(
             {
                 "download_size_bytes": downloaded_media.size_bytes,

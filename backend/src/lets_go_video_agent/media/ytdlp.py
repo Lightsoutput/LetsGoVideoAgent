@@ -79,6 +79,7 @@ class YtDlpAdapter:
         metadata_timeout_seconds: float = 60,
         python_executable: str = sys.executable,
         cookies_from_browser: str | None = None,
+        proxy_url: str | None = None,
         ffmpeg_location: str | None = None,
         url_policy: SourceUrlPolicy | None = None,
         runner: ProcessRunner | None = None,
@@ -94,6 +95,7 @@ class YtDlpAdapter:
         self._metadata_timeout_seconds = metadata_timeout_seconds
         self._python_executable = python_executable
         self._cookies_from_browser = cookies_from_browser
+        self._proxy_url = proxy_url
         self._ffmpeg_location = ffmpeg_location or _bundled_ffmpeg_location()
         self._url_policy = url_policy or SourceUrlPolicy()
         self._runner = runner or run_process
@@ -112,6 +114,7 @@ class YtDlpAdapter:
             "--no-playlist",
             "--no-warnings",
             *self._authentication_args(),
+            *self._network_args(),
             "--",
             safe_url,
         ]
@@ -180,6 +183,7 @@ class YtDlpAdapter:
             "vtt/srt/best",
             *self._ffmpeg_args(),
             *self._authentication_args(),
+            *self._network_args(),
             "--print",
             "after_move:filepath",
             "-o",
@@ -260,6 +264,11 @@ class YtDlpAdapter:
         if not self._ffmpeg_location:
             return []
         return ["--ffmpeg-location", self._ffmpeg_location]
+
+    def _network_args(self) -> list[str]:
+        """网页下载与模型调用共用统一出站代理，避免只修通其中一条链路。"""
+
+        return ["--proxy", self._proxy_url] if self._proxy_url else []
 
     def _resolve_inside_root(self, value: Path | str) -> Path:
         candidate = Path(value)

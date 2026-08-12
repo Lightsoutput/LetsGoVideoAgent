@@ -53,6 +53,8 @@ def build_video_tool_registry(
     retrieval: RetrievalPort,
     frame_inspector: FrameInspectionPort,
     web_search: WebSearchPort | None = None,
+    *,
+    frame_timeout_seconds: float = 65,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 
@@ -91,6 +93,7 @@ def build_video_tool_registry(
             input_model=InspectFrameInput,
             output_model=EvidenceBatch,
             handler=inspect_frame,
+            timeout_seconds=frame_timeout_seconds,
         )
     )
     if web_search is not None:

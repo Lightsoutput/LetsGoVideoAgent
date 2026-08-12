@@ -11,15 +11,13 @@ class SearxngClient:
         self._timeout = timeout_seconds
 
     async def health(self) -> bool:
+        """检查服务存活，不依赖可能被限流的第三方搜索引擎。"""
         try:
             async with httpx.AsyncClient(timeout=min(self._timeout, 3)) as client:
-                response = await client.get(
-                    f"{self._api_base}/search",
-                    params={"q": "health", "format": "json"},
-                )
+                response = await client.get(f"{self._api_base}/healthz")
             response.raise_for_status()
-            return isinstance(response.json(), dict)
-        except (httpx.HTTPError, ValueError, TypeError):
+            return True
+        except httpx.HTTPError:
             return False
 
     async def search(

@@ -53,10 +53,12 @@ async def verify_terms(
 @mcp.tool()
 async def search_health() -> dict[str, Any]:
     """检查 MCP 与其下游 SearXNG 是否可用。"""
-    results = await client.search("LetsGoVideoAgent health check", limit=1)
+    # 健康状态只判断 SearXNG HTTP 接口能否正确响应，不能用“是否搜到结果”判断。
+    # 搜索结果为空并不等于服务故障，反过来 MCP 进程在线也不代表下游可用。
+    searxng_ready = await client.health()
     return {
         "mcp": "ready",
-        "searxng": "ready" if results else "unavailable_or_no_results",
+        "searxng": "ready" if searxng_ready else "unavailable",
         "endpoint": settings.search_api_base,
     }
 

@@ -6,6 +6,7 @@ from decimal import Decimal
 from lets_go_video_agent.agents.harness.engine import AgentHarness
 from lets_go_video_agent.agents.roles.evidence_verifier import EvidenceVerifier
 from lets_go_video_agent.agents.roles.qa_investigator import QAInvestigator
+from lets_go_video_agent.agents.roles.skill_builder import SkillBuilderAgent
 from lets_go_video_agent.agents.tools.video_tools import build_video_tool_registry
 from lets_go_video_agent.application.ports import AppStore
 from lets_go_video_agent.application.services import (
@@ -13,8 +14,9 @@ from lets_go_video_agent.application.services import (
     VideoService,
     create_budget,
 )
+from lets_go_video_agent.application.skill_studio import SkillPolicyValidator, SkillStudioService
 from lets_go_video_agent.config import Settings
-from lets_go_video_agent.fixtures import seed_demo
+from lets_go_video_agent.fixtures import DEMO_VIDEO_ID, seed_demo
 from lets_go_video_agent.infrastructure.memory import (
     InMemoryFrameInspector,
     InMemoryRetrieval,
@@ -34,6 +36,7 @@ from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClie
 from lets_go_video_agent.media.local_pipeline import LocalProcessingManager
 from lets_go_video_agent.media.local_storage import LocalUploadStore
 from lets_go_video_agent.media.url_policy import SourceUrlPolicy
+from lets_go_video_agent.media.video_library import sync_video_library
 from lets_go_video_agent.media.ytdlp import YtDlpAdapter
 
 
@@ -49,6 +52,7 @@ class Container:
     store: AppStore
     videos: VideoService
     questions: QuestionService
+    skills: SkillStudioService
     processing: LocalProcessingManager
     cost_ledger: CostLedger
     harness: AgentHarness
@@ -58,6 +62,10 @@ class Container:
         await self.store.ping()
         if self.settings.seed_demo_data:
             await seed_demo(self.store)
+        elif await self.store.get(DEMO_VIDEO_ID) is not None:
+            # 演示夹具只服务测试/演示环境，关闭配置后自动从本地目录中移除。
+            await self.store.delete(DEMO_VIDEO_ID)
+        await sync_video_library(self.store, self.settings.video_library_dir)
 
     async def shutdown(self) -> None:
         await self.store.close()
@@ -66,7 +74,10 @@ class Container:
 def build_container(settings: Settings) -> Container:
     store: AppStore
     if settings.repository_backend == "memory":
-        store = InMemoryStore()
+        store = InMemoryStore(
+            skill_catalog_path=settings.local_data_dir / "skills" / "catalog.json",
+            state_catalog_path=settings.local_data_dir / "catalog" / "memory-state.json",
+        )
     elif settings.repository_backend == "mysql":
         # 延迟导入可选依赖，使不安装 SQLAlchemy 的纯内存测试仍然可以运行。
         from lets_go_video_agent.infrastructure.persistence.mysql.repository import (
@@ -97,6 +108,12 @@ def build_container(settings: Settings) -> Container:
             proxy_url=settings.outbound_http_proxy,
         )
     investigator = QAInvestigator(llm=llm)
+    skills = SkillStudioService(
+        store=store,
+        builder=SkillBuilderAgent(llm=llm),
+        validator=SkillPolicyValidator(),
+        artifact_root=settings.skill_artifact_dir,
+    )
     vlm: OllamaVisionClient | SiliconFlowVisionClient | None = None
     if settings.vlm_provider == "ollama":
         vlm = OllamaVisionClient(
@@ -121,17 +138,25 @@ def build_container(settings: Settings) -> Container:
         retrieval,
         store=store,
         data_dir=settings.local_data_dir,
+        library_dir=settings.video_library_dir,
         vlm=vlm,
+        vlm_timeout_seconds=settings.frame_vlm_timeout_seconds,
     )
-    tool_registry = build_video_tool_registry(retrieval, frame_inspector, web_search)
+    tool_registry = build_video_tool_registry(
+        retrieval,
+        frame_inspector,
+        web_search,
+        frame_timeout_seconds=settings.frame_tool_timeout_seconds,
+    )
     harness = AgentHarness(tool_registry, events=store)
 
     video_service = VideoService(
         videos=store,
         timeline=store,
         upload_store=LocalUploadStore(
-            root=settings.local_data_dir,
+            root=settings.video_library_dir,
             max_bytes=settings.max_upload_bytes,
+            object_key_prefix="library",
         ),
         url_policy=SourceUrlPolicy(),
     )
@@ -142,6 +167,7 @@ def build_container(settings: Settings) -> Container:
         harness=harness,
         investigator=investigator,
         verifier=verifier,
+        skills=skills,
         default_budget=create_budget(
             max_model_calls=settings.agent_max_model_calls,
             max_tool_calls=settings.agent_max_tool_calls,
@@ -153,15 +179,17 @@ def build_container(settings: Settings) -> Container:
     processing = LocalProcessingManager(
         store=store,
         data_dir=settings.local_data_dir,
+        library_dir=settings.video_library_dir,
         asr_model=settings.local_asr_model,
         llm=llm,
         vlm=vlm,
         web_search=web_search,
         web_downloader=YtDlpAdapter(
-            download_root=settings.local_data_dir / "web-imports",
+            download_root=settings.video_library_dir,
             remote_enabled=settings.enable_remote_downloads,
             max_download_bytes=settings.max_upload_bytes,
             cookies_from_browser=settings.ytdlp_cookies_from_browser,
+            proxy_url=settings.outbound_http_proxy,
         ),
     )
     return Container(
@@ -169,6 +197,7 @@ def build_container(settings: Settings) -> Container:
         store=store,
         videos=video_service,
         questions=question_service,
+        skills=skills,
         processing=processing,
         cost_ledger=cost_ledger,
         harness=harness,

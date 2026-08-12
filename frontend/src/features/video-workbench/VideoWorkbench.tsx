@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatPanel } from "@/features/video-chat/ChatPanel";
 import { ImportPanel } from "@/features/video-ingest/ImportPanel";
 import { ObservabilityPanel } from "@/features/observability/ObservabilityPanel";
+import { SkillStudio } from "@/features/skill-studio/SkillStudio";
 import { Timeline } from "@/features/timeline/Timeline";
 import { VideoStage } from "@/features/video-workbench/VideoStage";
 import { getProcessing, getTimeline, getVideo, listVideos, startProcessing } from "@/lib/api/client";
@@ -19,10 +20,13 @@ export function VideoWorkbench() {
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<ProcessingRun | null>(null);
   const [showImporter, setShowImporter] = useState(false);
-  const [showObservability, setShowObservability] = useState(false);
+  // 三个工作区只能有一个处于活动状态，避免两个全屏面板同时挂载造成遮挡和返回错乱。
+  const [workspace, setWorkspace] = useState<"video" | "observability" | "skills">("video");
   const [activeTraceId, setActiveTraceId] = useState<string | null>(null);
   const [runNotice, setRunNotice] = useState<string | null>(null);
   const processingStatusRef = useRef<Record<string, ProcessingRun["status"]>>({});
+  const showObservability = workspace === "observability";
+  const showSkillStudio = workspace === "skills";
 
   const selectedVideo =
     videos.find((video) => video.id === selectedId) ?? videos[0] ?? null;
@@ -130,6 +134,11 @@ export function VideoWorkbench() {
     setShowImporter(false);
   }
 
+  function openImporter() {
+    setWorkspace("video");
+    setShowImporter(true);
+  }
+
   function seek(timestampMs: number) {
     const duration = selectedVideo?.duration_ms ?? Number.POSITIVE_INFINITY;
     setCurrentTimeMs(Math.min(duration, Math.max(0, timestampMs)));
@@ -148,7 +157,7 @@ export function VideoWorkbench() {
   }
 
   return (
-    <div className={`app-shell compact-shell ${showObservability ? "ops-open" : ""}`}>
+    <div className={`app-shell compact-shell workspace-${workspace}`}>
       <header className="app-header compact-header">
         <div className="brand">
           <div className="brand-mark"><span /></div>
@@ -172,17 +181,27 @@ export function VideoWorkbench() {
               ))}
             </select>
           </label>
-          <button className="add-video-button" onClick={() => setShowImporter(true)} type="button">
+          <button className="add-video-button" onClick={openImporter} type="button">
             ＋ 添加视频
           </button>
         </div>
         <div className="header-status">
           <button
-            className="observability-button"
-            onClick={() => setShowObservability((current) => !current)}
+            aria-pressed={showSkillStudio}
+            className="skill-studio-button"
+            onClick={() => setWorkspace(showSkillStudio ? "video" : "skills")}
             type="button"
           >
-            {showObservability ? "返回对话" : "运行观测"}
+            <span>◇</span> Skill Studio
+          </button>
+          <button
+            aria-pressed={showObservability}
+            className={`observability-button ${activeTraceId ? "has-trace" : ""}`}
+            onClick={() => setWorkspace(showObservability ? "video" : "observability")}
+            type="button"
+          >
+            <i />
+            <span>Agent 运行观测</span>
           </button>
           <span className="profile-badge">ECONOMY</span>
           <span className="connection-state">
@@ -192,7 +211,7 @@ export function VideoWorkbench() {
         </div>
       </header>
 
-      <main className="workspace-main">
+      {workspace === "video" && <main className="workspace-main">
         {runNotice && (
           <div className="run-notice" aria-live="assertive">
             <i />
@@ -248,13 +267,13 @@ export function VideoWorkbench() {
             <div className="agent-mark large">L</div>
             <h1>{loading ? "正在读取视频…" : "添加第一个视频"}</h1>
             <p>上传本地文件或导入有权处理的公开网页视频。</p>
-            {!loading && <button className="primary-button" onClick={() => setShowImporter(true)} type="button">添加视频</button>}
+            {!loading && <button className="primary-button" onClick={openImporter} type="button">添加视频</button>}
           </section>
         )}
-      </main>
+      </main>}
 
-      <div className="side-workspace">
-        <div className="side-chat" hidden={showObservability}>
+      {workspace === "video" && <div className="side-workspace">
+        <div className="side-chat">
           <ChatPanel
             activeRange={activeChapter?.time_range ?? null}
             currentTimeMs={currentTimeMs}
@@ -262,23 +281,37 @@ export function VideoWorkbench() {
             onAnswer={(answer) => {
               setActiveTraceId(answer.trace_id);
             }}
+            onTraceStarted={(traceId) => {
+              setActiveTraceId(traceId);
+            }}
             onOpenTrace={(traceId) => {
               setActiveTraceId(traceId);
-              setShowObservability(true);
+              setWorkspace("observability");
             }}
             video={selectedVideo}
           />
         </div>
+      </div>}
 
-        <ObservabilityPanel
-          key={`${showObservability ? "open" : "closed"}:${activeTraceId ?? "system"}`}
-          onClose={() => setShowObservability(false)}
-          open={showObservability}
-          processing={processing}
-          traceId={activeTraceId}
-          videoId={selectedVideoId}
-        />
-      </div>
+      <ObservabilityPanel
+        key={`${showObservability ? "open" : "closed"}:${activeTraceId ?? "system"}`}
+        onClose={() => setWorkspace("video")}
+        open={showObservability}
+        processing={processing}
+        traceId={activeTraceId}
+        videoId={selectedVideoId}
+      />
+
+      <SkillStudio
+        currentVideoId={selectedVideoId}
+        onClose={() => setWorkspace("video")}
+        onOpenTrace={(traceId) => {
+          setActiveTraceId(traceId);
+          setWorkspace("observability");
+        }}
+        open={showSkillStudio}
+        videos={videos}
+      />
 
       {showImporter && (
         <div className="import-modal-backdrop" onMouseDown={() => setShowImporter(false)} role="presentation">
