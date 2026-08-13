@@ -25,19 +25,19 @@ LetsGoVideoAgent 是一个面向通用视频内容的多模态、多 Agent 理�
 
 视频预览、处理进度、视频 Agent 对话与多轨时间轴保持在同一工作区。示例中音频、OCR 与 Qwen3-VL 视觉理解正在并行处理《【Zc故事】坚脚不移》。
 
-![Zc 故事视频理解工作台](docs/assets/screenshots/zc-video-workbench.png)
+<img width="1600" height="1000" alt="zc-video-workbench" src="https://github.com/user-attachments/assets/c8662b2d-d051-4da8-8a25-23de30d06fed" />
 
 ### Agent 运行观测
 
 每个 Agent 使用统一编号，展示当前职责、所处理视频、进度、模型/算法、等待关系和 Trace。图中 A05 视觉理解正在运行，已完成的媒体接入、ASR、抽帧和 OCR 不会被伪装成 LLM Agent。
 
-![Zc 故事多 Agent 运行观测](docs/assets/screenshots/zc-agent-observability.png)
+<img width="1600" height="1000" alt="zc-agent-observability" src="https://github.com/user-attachments/assets/18da53c3-7b10-446b-98bc-dec6953dca4a" />
 
 ### Skill Studio
 
 垂类项目可以批量管理同类视频样本，查看每条视频的摘要、章节和代表画面，再选择样本生成、修改、发布和绑定 Skill；模型与 Agent 成本可追溯到具体视频和任务。
 
-![Zc 故事 Skill Studio](docs/assets/screenshots/zc-skill-studio.png)
+<img width="1600" height="1000" alt="zc-skill-studio" src="https://github.com/user-attachments/assets/0585d8f5-c93c-40e1-94f9-0b009d75c873" />
 
 ## 已实现能力（v1.0）
 
