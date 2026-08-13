@@ -10,6 +10,8 @@ import type {
   UsageSummary,
   Skill,
   SkillDetail,
+  SkillProject,
+  SkillProjectWorkspace,
 } from "@/lib/api/types";
 
 export const API_BASE =
@@ -59,6 +61,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       problem?.code,
     );
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -135,8 +138,11 @@ export async function getAgentRun(traceId: string): Promise<AgentRun> {
   return request<AgentRun>(`/agent-runs/${traceId}`);
 }
 
-export async function getUsageSummary(videoId?: string): Promise<UsageSummary> {
-  const query = videoId ? `?video_id=${encodeURIComponent(videoId)}` : "";
+export async function getUsageSummary(videoId?: string, traceId?: string): Promise<UsageSummary> {
+  const params = new URLSearchParams();
+  if (videoId) params.set("video_id", videoId);
+  if (traceId) params.set("trace_id", traceId);
+  const query = params.size ? `?${params.toString()}` : "";
   return request<UsageSummary>(`/observability/usage${query}`);
 }
 
@@ -147,6 +153,63 @@ export async function getSystemObservability(): Promise<SystemObservability> {
 export async function listSkills(): Promise<Skill[]> {
   const data = await request<{ items: Skill[] }>("/skills");
   return data.items;
+}
+
+export async function deleteSkills(skillIds: string[]): Promise<void> {
+  return request<void>("/skills/batch-delete", {
+    method: "POST",
+    body: JSON.stringify({ skill_ids: skillIds }),
+  });
+}
+
+export async function listSkillProjects(): Promise<SkillProject[]> {
+  const data = await request<{ items: SkillProject[] }>("/skill-projects");
+  return data.items;
+}
+
+export async function createSkillProject(input: {
+  name: string;
+  goal: string;
+  description?: string;
+}): Promise<SkillProjectWorkspace> {
+  return request<SkillProjectWorkspace>("/skill-projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getSkillProject(projectId: string): Promise<SkillProjectWorkspace> {
+  return request<SkillProjectWorkspace>(`/skill-projects/${projectId}`);
+}
+
+export async function addSkillProjectVideos(
+  projectId: string,
+  urls: string[],
+): Promise<SkillProjectWorkspace> {
+  return request<SkillProjectWorkspace>(`/skill-projects/${projectId}/videos`, {
+    method: "POST",
+    body: JSON.stringify({ urls, rights_confirmed: true }),
+  });
+}
+
+export async function retrySkillProjectItem(
+  projectId: string,
+  itemId: string,
+): Promise<SkillProjectWorkspace> {
+  return request<SkillProjectWorkspace>(
+    `/skill-projects/${projectId}/items/${itemId}/retry`,
+    { method: "POST" },
+  );
+}
+
+export async function attachProjectSkill(
+  projectId: string,
+  skillId: string,
+): Promise<SkillProjectWorkspace> {
+  return request<SkillProjectWorkspace>(`/skill-projects/${projectId}/skill`, {
+    method: "POST",
+    body: JSON.stringify({ skill_id: skillId }),
+  });
 }
 
 export async function getSkill(skillId: string): Promise<SkillDetail> {
@@ -165,6 +228,17 @@ export async function generateSkill(input: {
       goal: input.goal,
       display_name: input.displayName || null,
     }),
+  });
+}
+
+export async function regenerateSkill(
+  skillId: string,
+  videoIds: string[],
+  goal?: string,
+): Promise<SkillDetail> {
+  return request<SkillDetail>(`/skills/${skillId}/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({ video_ids: videoIds, goal: goal || null }),
   });
 }
 

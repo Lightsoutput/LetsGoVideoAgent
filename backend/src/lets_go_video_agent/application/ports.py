@@ -8,7 +8,13 @@ from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer, Question, QuestionTarget
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
-from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
+from lets_go_video_agent.domain.skill import (
+    Skill,
+    SkillBinding,
+    SkillProject,
+    SkillProjectItem,
+    SkillVersion,
+)
 from lets_go_video_agent.domain.timeline import Evidence, TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 
@@ -59,6 +65,7 @@ class FrameInspectionPort(Protocol):
         video_id: UUID,
         timestamp_ms: int,
         query: str,
+        trace_id: UUID | None = None,
     ) -> Sequence[Evidence]: ...
 
 
@@ -109,7 +116,11 @@ class ObservabilityRepository(Protocol):
 
     async def append_usage_event(self, event: UsageEvent) -> None: ...
 
-    async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]: ...
+    async def list_usage_events(
+        self,
+        video_id: UUID | None = None,
+        trace_id: UUID | None = None,
+    ) -> Sequence[UsageEvent]: ...
 
 
 class SkillRepository(Protocol):
@@ -118,6 +129,8 @@ class SkillRepository(Protocol):
     async def get_skill(self, skill_id: UUID) -> Skill | None: ...
 
     async def list_skills(self) -> Sequence[Skill]: ...
+
+    async def delete_skill(self, skill_id: UUID) -> None: ...
 
     async def add_skill_version(self, version: SkillVersion) -> None: ...
 
@@ -132,6 +145,22 @@ class SkillRepository(Protocol):
     async def get_skill_binding(self, video_id: UUID) -> SkillBinding | None: ...
 
     async def list_skill_bindings(self, skill_id: UUID | None = None) -> Sequence[SkillBinding]: ...
+
+    async def upsert_skill_project(self, project: SkillProject) -> None: ...
+
+    async def get_skill_project(self, project_id: UUID) -> SkillProject | None: ...
+
+    async def list_skill_projects(self) -> Sequence[SkillProject]: ...
+
+    async def delete_skill_project(self, project_id: UUID) -> None: ...
+
+    async def upsert_skill_project_item(self, item: SkillProjectItem) -> None: ...
+
+    async def get_skill_project_item(self, item_id: UUID) -> SkillProjectItem | None: ...
+
+    async def list_skill_project_items(
+        self, project_id: UUID
+    ) -> Sequence[SkillProjectItem]: ...
 
 
 class AppStore(

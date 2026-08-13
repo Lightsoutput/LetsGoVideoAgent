@@ -3,6 +3,20 @@
 )
 
 $ErrorActionPreference = "Stop"
+
+# Windows 环境变量名不区分大小写，但部分启动器会同时注入 Path 与 PATH。
+# Windows PowerShell 5.1 的 Start-Process 会把它们当成重复字典键并直接报错，
+# 这正是批处理偶发“第一次启动失败”的根因。启动任何子进程前先合并为一个 Path。
+$pathEntries = @(
+    [Environment]::GetEnvironmentVariables().GetEnumerator() |
+        Where-Object { [string]$_.Key -ieq "PATH" }
+)
+if ($pathEntries.Count -gt 1) {
+    $canonicalPath = [string]$pathEntries[0].Value
+    [Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+    [Environment]::SetEnvironmentVariable("Path", $canonicalPath, "Process")
+}
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot "backend\.venv\Scripts\python.exe"
 $nextCli = Join-Path $projectRoot "frontend\node_modules\next\dist\bin\next"
@@ -51,6 +65,27 @@ function Wait-HttpEndpoint {
         Start-Sleep -Seconds 1
     } while ((Get-Date) -lt $deadline)
     throw "$Name was not ready within $TimeoutSeconds seconds."
+}
+
+function Invoke-WithRetry {
+    param(
+        [string]$Name,
+        [scriptblock]$Action,
+        [int]$Attempts = 3,
+        [int]$DelaySeconds = 3
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        & $Action
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+        if ($attempt -lt $Attempts) {
+            Write-Host "[RETRY] $Name attempt $attempt/$Attempts failed; retrying in $DelaySeconds seconds." -ForegroundColor Yellow
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    throw "$Name failed after $Attempts attempts."
 }
 
 function Test-DockerEngine {
@@ -127,8 +162,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 
 $dockerReady = Test-DockerEngine
 $searxngReady = Test-TcpPort -Port 8888
-& $python (Join-Path $projectRoot "scripts\check-search-mcp.py") *> $null
-$mcpReady = $LASTEXITCODE -eq 0
+$mcpReady = Test-TcpPort -Port 8090
 $backendReady = Test-HttpEndpoint -Uri "http://127.0.0.1:8000/api/v1/health/live"
 $frontendReady = Test-HttpEndpoint -Uri "http://127.0.0.1:3000"
 
@@ -139,7 +173,8 @@ if ($CheckOnly) {
     Write-Host "  Search MCP    : $mcpReady"
     Write-Host "  Backend API   : $backendReady"
     Write-Host "  Frontend      : $frontendReady"
-    if ($dockerReady -and $searxngReady -and $mcpReady -and $backendReady -and $frontendReady) {
+    # Docker Desktop 可能已退出，但现有 SearXNG/MCP 仍然可用；状态检查以实际服务为准。
+    if ($searxngReady -and $mcpReady -and $backendReady -and $frontendReady) {
         exit 0
     }
     exit 1
@@ -147,27 +182,33 @@ if ($CheckOnly) {
 
 Write-Host "Starting LetsGoVideoAgent (manual one-shot startup; no autostart/watchdog)." -ForegroundColor Cyan
 
-if (-not $dockerReady) {
-    if (-not (Test-Path -LiteralPath $dockerDesktop)) {
-        throw "Docker Desktop was not found: $dockerDesktop"
-    }
-    if (Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue) {
-        Write-Host "[WAIT] Docker Desktop is starting; no duplicate process will be created."
-    }
-    else {
-        Write-Host "[START] Docker Desktop (minimized)" -ForegroundColor Cyan
-        Start-Process -FilePath $dockerDesktop -ArgumentList "--minimized" -WindowStyle Hidden | Out-Null
-    }
-    Wait-DockerEngine -TimeoutSeconds 90
+if ($searxngReady -and $mcpReady) {
+    # 搜索服务都已经可用时，不再仅因 Docker 探测失败而唤起 Docker Desktop。
+    # 这可以避免重复点击批处理后 Docker 窗口被反复拉起。
+    Write-Host "[SKIP] SearXNG and Search MCP are already available."
 }
 else {
-    Write-Host "[SKIP] Docker Engine is already running."
-}
+    if (-not $dockerReady) {
+        if (-not (Test-Path -LiteralPath $dockerDesktop)) {
+            throw "Docker Desktop was not found: $dockerDesktop"
+        }
+        if (Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue) {
+            Write-Host "[WAIT] Docker Desktop is starting; no duplicate process will be created."
+        }
+        else {
+            Write-Host "[START] Docker Desktop (minimized)" -ForegroundColor Cyan
+            Start-Process -FilePath $dockerDesktop -ArgumentList "--minimized" -WindowStyle Hidden | Out-Null
+        }
+        Wait-DockerEngine -TimeoutSeconds 90
+    }
+    else {
+        Write-Host "[SKIP] Docker Engine is already running."
+    }
 
-# Docker 已由用户主动运行本脚本启动；这里只启动 SearXNG 容器与本地 Search MCP。
-& $python (Join-Path $projectRoot "scripts\ensure-search-stack.py") --skip-real-search
-if ($LASTEXITCODE -ne 0) {
-    throw "Search stack startup failed."
+    # 只有搜索链路确实不完整时才修复容器和本地 MCP，并自动重试。
+    Invoke-WithRetry -Name "Search stack startup" -Attempts 3 -DelaySeconds 4 -Action {
+        & $python (Join-Path $projectRoot "scripts\ensure-search-stack.py") --skip-real-search
+    }
 }
 
 New-Item -ItemType Directory -Path $backendLogDirectory -Force | Out-Null
@@ -178,6 +219,8 @@ if (Test-TcpPort -Port 8000) {
     Write-Host "[SKIP] Backend API is already running."
 }
 else {
+    # Windows 后台服务不启用 uvicorn --reload：reloader 会再派生一个 Python，
+    # 重启时容易留下幽灵监听，让 8000 看似健康却仍运行旧代码。
     Start-LoggedProcess `
         -Name "Backend API" `
         -FilePath $python `

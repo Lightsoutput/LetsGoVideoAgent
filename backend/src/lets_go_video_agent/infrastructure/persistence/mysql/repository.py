@@ -13,11 +13,18 @@ from sqlalchemy.ext.asyncio import (
 
 from lets_go_video_agent.agents.harness.models import AgentRun
 from lets_go_video_agent.application.ports import RunRecord
+from lets_go_video_agent.domain.common import utc_now
 from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer, Question
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
-from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
+from lets_go_video_agent.domain.skill import (
+    Skill,
+    SkillBinding,
+    SkillProject,
+    SkillProjectItem,
+    SkillVersion,
+)
 from lets_go_video_agent.domain.timeline import TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 from lets_go_video_agent.infrastructure.persistence.mysql.models import (
@@ -28,6 +35,8 @@ from lets_go_video_agent.infrastructure.persistence.mysql.models import (
     QuestionRow,
     SemanticEventRow,
     SkillBindingRow,
+    SkillProjectItemRow,
+    SkillProjectRow,
     SkillRow,
     SkillVersionRow,
     TimelineArtifactRow,
@@ -294,11 +303,15 @@ class MySqlStore:
                 )
             )
 
-    async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]:
+    async def list_usage_events(
+        self, video_id: UUID | None = None, trace_id: UUID | None = None
+    ) -> Sequence[UsageEvent]:
         async with self.sessions() as session:
             statement = select(UsageEventRow)
             if video_id is not None:
                 statement = statement.where(UsageEventRow.video_id == str(video_id))
+            if trace_id is not None:
+                statement = statement.where(UsageEventRow.trace_id == str(trace_id))
             rows = (await session.scalars(statement.order_by(UsageEventRow.occurred_at))).all()
             return [UsageEvent.model_validate(row.payload) for row in rows]
 
@@ -327,6 +340,28 @@ class MySqlStore:
                 await session.scalars(select(SkillRow).order_by(SkillRow.updated_at.desc()))
             ).all()
             return [Skill.model_validate(row.payload) for row in rows]
+
+    async def delete_skill(self, skill_id: UUID) -> None:
+        """先同步 JSON 载荷中的项目引用，再依靠外键级联删除版本和绑定。"""
+
+        async with self.sessions.begin() as session:
+            projects = (
+                await session.scalars(
+                    select(SkillProjectRow).where(
+                        SkillProjectRow.skill_id == str(skill_id)
+                    )
+                )
+            ).all()
+            for row in projects:
+                project = SkillProject.model_validate(row.payload)
+                project.skill_id = None
+                project.updated_at = utc_now()
+                row.skill_id = None
+                row.updated_at = project.updated_at
+                row.payload = project.model_dump(mode="json")
+            await session.execute(
+                delete(SkillRow).where(SkillRow.id == str(skill_id))
+            )
 
     async def add_skill_version(self, version: SkillVersion) -> None:
         async with self.sessions.begin() as session:
@@ -393,6 +428,69 @@ class MySqlStore:
                 statement = statement.where(SkillBindingRow.skill_id == str(skill_id))
             rows = (await session.scalars(statement.order_by(SkillBindingRow.created_at))).all()
             return [SkillBinding.model_validate(row.payload) for row in rows]
+
+    async def upsert_skill_project(self, project: SkillProject) -> None:
+        async with self.sessions.begin() as session:
+            await session.merge(
+                SkillProjectRow(
+                    id=str(project.id),
+                    status=project.status.value,
+                    skill_id=str(project.skill_id) if project.skill_id else None,
+                    payload=project.model_dump(mode="json"),
+                    created_at=project.created_at,
+                    updated_at=project.updated_at,
+                )
+            )
+
+    async def get_skill_project(self, project_id: UUID) -> SkillProject | None:
+        async with self.sessions() as session:
+            row = await session.get(SkillProjectRow, str(project_id))
+            return SkillProject.model_validate(row.payload) if row else None
+
+    async def list_skill_projects(self) -> Sequence[SkillProject]:
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(SkillProjectRow).order_by(SkillProjectRow.updated_at.desc())
+                )
+            ).all()
+            return [SkillProject.model_validate(row.payload) for row in rows]
+
+    async def delete_skill_project(self, project_id: UUID) -> None:
+        async with self.sessions.begin() as session:
+            await session.execute(
+                delete(SkillProjectRow).where(SkillProjectRow.id == str(project_id))
+            )
+
+    async def upsert_skill_project_item(self, item: SkillProjectItem) -> None:
+        async with self.sessions.begin() as session:
+            await session.merge(
+                SkillProjectItemRow(
+                    id=str(item.id),
+                    project_id=str(item.project_id),
+                    video_id=str(item.video_id) if item.video_id else None,
+                    status=item.status.value,
+                    payload=item.model_dump(mode="json"),
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                )
+            )
+
+    async def get_skill_project_item(self, item_id: UUID) -> SkillProjectItem | None:
+        async with self.sessions() as session:
+            row = await session.get(SkillProjectItemRow, str(item_id))
+            return SkillProjectItem.model_validate(row.payload) if row else None
+
+    async def list_skill_project_items(self, project_id: UUID) -> Sequence[SkillProjectItem]:
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(SkillProjectItemRow)
+                    .where(SkillProjectItemRow.project_id == str(project_id))
+                    .order_by(SkillProjectItemRow.created_at)
+                )
+            ).all()
+            return [SkillProjectItem.model_validate(row.payload) for row in rows]
 
     @staticmethod
     def _video_row(video: Video) -> VideoRow:

@@ -60,6 +60,7 @@ class Question(DomainModel):
     skill_version: int | None = Field(default=None, ge=1)
     skill_name: str | None = Field(default=None, max_length=120)
     skill_context: str | None = Field(default=None, max_length=8_000)
+    trace_id: UUID | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

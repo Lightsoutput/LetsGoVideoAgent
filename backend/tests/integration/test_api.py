@@ -160,7 +160,7 @@ def test_p1_system_observability_exposes_safe_harness_and_mcp_status(
     assert "api_key" not in response.text.lower()
 
 
-def test_p2_skill_studio_publish_binding_and_runtime_trace(client: TestClient) -> None:
+def test_skill_studio_publish_binding_and_runtime_trace(client: TestClient) -> None:
     generated = client.post(
         "/api/v1/skills/generate",
         json={
@@ -196,3 +196,86 @@ def test_p2_skill_studio_publish_binding_and_runtime_trace(client: TestClient) -
     trace = client.get(f"/api/v1/traces/{answer.json()['trace_id']}").json()["items"]
     assert any(item["event_type"] == "skill.loaded" for item in trace)
     assert any(item["event_type"] == "skill.validated" for item in trace)
+
+
+def test_skill_can_regenerate_from_selected_samples(client: TestClient) -> None:
+    generated = client.post(
+        "/api/v1/skills/generate",
+        json={
+            "video_ids": [str(DEMO_VIDEO_ID)],
+            "goal": "验证类别内容、画面与叙事规律",
+            "display_name": "重生成测试 Skill",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    detail = generated.json()
+    skill_id = detail["skill"]["id"]
+    regenerated = client.post(
+        f"/api/v1/skills/{skill_id}/regenerate",
+        json={"video_ids": [str(DEMO_VIDEO_ID)]},
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    versions = regenerated.json()["versions"]
+    assert versions[0]["version"] == 2
+    assert versions[0]["parent_version"] == 1
+    assert versions[0]["sample_video_ids"] == [str(DEMO_VIDEO_ID)]
+
+
+def test_skill_batch_delete_removes_selected_skills(client: TestClient) -> None:
+    skill_ids = []
+    for name in ("批量删除一", "批量删除二"):
+        generated = client.post(
+            "/api/v1/skills/generate",
+            json={
+                "video_ids": [str(DEMO_VIDEO_ID)],
+                "goal": "验证 Skill 批量删除接口",
+                "display_name": name,
+            },
+        )
+        assert generated.status_code == 201, generated.text
+        skill_ids.append(generated.json()["skill"]["id"])
+
+    deleted = client.post(
+        "/api/v1/skills/batch-delete",
+        json={"skill_ids": skill_ids},
+    )
+    assert deleted.status_code == 204, deleted.text
+    listed_ids = {
+        item["id"] for item in client.get("/api/v1/skills").json()["items"]
+    }
+    assert not listed_ids.intersection(skill_ids)
+
+
+def test_skill_project_accepts_multiple_urls_and_exposes_team_workspace(
+    client: TestClient,
+) -> None:
+    created = client.post(
+        "/api/v1/skill-projects",
+        json={
+            "name": "Zc故事",
+            "goal": "理解故事视频的叙事结构、人物关系和画面线索",
+            "description": "用于积累同类视频样本",
+        },
+    )
+    assert created.status_code == 201, created.text
+    project_id = created.json()["project"]["id"]
+
+    added = client.post(
+        f"/api/v1/skill-projects/{project_id}/videos",
+        json={
+            "urls": [
+                "https://www.bilibili.com/video/BV1g441147Lc/",
+                "https://www.bilibili.com/video/BV1xx411c7mD/",
+            ],
+            "rights_confirmed": False,
+        },
+    )
+    assert added.status_code == 202, added.text
+    workspace = added.json()
+    assert len(workspace["items"]) == 2
+    assert len(workspace["agents"]) >= 7
+    assert all(item["status"] == "importing" for item in workspace["items"])
+
+    listed = client.get("/api/v1/skill-projects")
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["name"] == "Zc故事"

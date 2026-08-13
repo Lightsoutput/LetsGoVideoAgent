@@ -21,7 +21,13 @@ from lets_go_video_agent.domain.qa import (
     RangeTarget,
 )
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
-from lets_go_video_agent.domain.skill import Skill, SkillBinding, SkillVersion
+from lets_go_video_agent.domain.skill import (
+    Skill,
+    SkillBinding,
+    SkillProject,
+    SkillProjectItem,
+    SkillVersion,
+)
 from lets_go_video_agent.domain.timeline import (
     Evidence,
     EvidenceKind,
@@ -58,6 +64,8 @@ class InMemoryStore:
         self.skills: dict[UUID, Skill] = {}
         self.skill_versions: dict[UUID, list[SkillVersion]] = {}
         self.skill_bindings: dict[UUID, SkillBinding] = {}
+        self.skill_projects: dict[UUID, SkillProject] = {}
+        self.skill_project_items: dict[UUID, SkillProjectItem] = {}
         self._skill_catalog_path = skill_catalog_path
         self._state_catalog_path = state_catalog_path
         self._lock = asyncio.Lock()
@@ -181,10 +189,14 @@ class InMemoryStore:
             self.usage_events[:] = [item for item in self.usage_events if item.id != event.id]
             self.usage_events.append(event.model_copy(deep=True))
 
-    async def list_usage_events(self, video_id: UUID | None = None) -> Sequence[UsageEvent]:
+    async def list_usage_events(
+        self, video_id: UUID | None = None, trace_id: UUID | None = None
+    ) -> Sequence[UsageEvent]:
         events = self.usage_events
         if video_id is not None:
             events = [item for item in events if item.video_id == video_id]
+        if trace_id is not None:
+            events = [item for item in events if item.trace_id == trace_id]
         return [item.model_copy(deep=True) for item in events]
 
     async def upsert_skill(self, skill: Skill) -> None:
@@ -203,6 +215,24 @@ class InMemoryStore:
                 self.skills.values(), key=lambda value: value.updated_at, reverse=True
             )
         ]
+
+    async def delete_skill(self, skill_id: UUID) -> None:
+        """删除 Skill 本体及其版本、绑定，并清除项目上的失效引用。"""
+
+        async with self._lock:
+            self.skills.pop(skill_id, None)
+            self.skill_versions.pop(skill_id, None)
+            self.skill_bindings = {
+                video_id: binding
+                for video_id, binding in self.skill_bindings.items()
+                if binding.skill_id != skill_id
+            }
+            for project_id, project in list(self.skill_projects.items()):
+                if project.skill_id == skill_id:
+                    self.skill_projects[project_id] = project.model_copy(
+                        update={"skill_id": None, "updated_at": utc_now()}
+                    )
+            self._persist_skill_catalog()
 
     async def add_skill_version(self, version: SkillVersion) -> None:
         async with self._lock:
@@ -241,6 +271,54 @@ class InMemoryStore:
         if skill_id is not None:
             items = [item for item in items if item.skill_id == skill_id]
         return [item.model_copy(deep=True) for item in items]
+
+    async def upsert_skill_project(self, project: SkillProject) -> None:
+        async with self._lock:
+            self.skill_projects[project.id] = project.model_copy(deep=True)
+            self._persist_skill_catalog()
+
+    async def get_skill_project(self, project_id: UUID) -> SkillProject | None:
+        project = self.skill_projects.get(project_id)
+        return project.model_copy(deep=True) if project else None
+
+    async def list_skill_projects(self) -> Sequence[SkillProject]:
+        return [
+            item.model_copy(deep=True)
+            for item in sorted(
+                self.skill_projects.values(),
+                key=lambda value: value.updated_at,
+                reverse=True,
+            )
+        ]
+
+    async def delete_skill_project(self, project_id: UUID) -> None:
+        async with self._lock:
+            self.skill_projects.pop(project_id, None)
+            self.skill_project_items = {
+                item_id: item
+                for item_id, item in self.skill_project_items.items()
+                if item.project_id != project_id
+            }
+            self._persist_skill_catalog()
+
+    async def upsert_skill_project_item(self, item: SkillProjectItem) -> None:
+        async with self._lock:
+            self.skill_project_items[item.id] = item.model_copy(deep=True)
+            self._persist_skill_catalog()
+
+    async def get_skill_project_item(self, item_id: UUID) -> SkillProjectItem | None:
+        item = self.skill_project_items.get(item_id)
+        return item.model_copy(deep=True) if item else None
+
+    async def list_skill_project_items(self, project_id: UUID) -> Sequence[SkillProjectItem]:
+        return [
+            item.model_copy(deep=True)
+            for item in sorted(
+                self.skill_project_items.values(),
+                key=lambda value: value.created_at,
+            )
+            if item.project_id == project_id
+        ]
 
     async def ping(self) -> None:
         return None
@@ -339,11 +417,19 @@ class InMemoryStore:
             for raw in payload.get("bindings", []):
                 binding = SkillBinding.model_validate(raw)
                 self.skill_bindings[binding.video_id] = binding
+            for raw in payload.get("projects", []):
+                project = SkillProject.model_validate(raw)
+                self.skill_projects[project.id] = project
+            for raw in payload.get("project_items", []):
+                item = SkillProjectItem.model_validate(raw)
+                self.skill_project_items[item.id] = item
         except (OSError, ValueError, TypeError):
             # 损坏的开发态目录不能阻止 API 启动；后续写入会生成新的合法快照。
             self.skills.clear()
             self.skill_versions.clear()
             self.skill_bindings.clear()
+            self.skill_projects.clear()
+            self.skill_project_items.clear()
 
     def _persist_skill_catalog(self) -> None:
         path = self._skill_catalog_path
@@ -358,6 +444,10 @@ class InMemoryStore:
                 for item in versions
             ],
             "bindings": [item.model_dump(mode="json") for item in self.skill_bindings.values()],
+            "projects": [item.model_dump(mode="json") for item in self.skill_projects.values()],
+            "project_items": [
+                item.model_dump(mode="json") for item in self.skill_project_items.values()
+            ],
         }
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -397,6 +487,7 @@ class InMemoryRetrieval:
         *,
         video_id: UUID,
         query: str,
+        trace_id: UUID | None = None,
         target: QuestionTarget,
         limit: int,
     ) -> Sequence[Evidence]:
@@ -592,6 +683,7 @@ class InMemoryFrameInspector:
         video_id: UUID,
         timestamp_ms: int,
         query: str,
+        trace_id: UUID | None = None,
     ) -> Sequence[Evidence]:
         # 当前帧问答必须分析用户指定时间的真实图片，不能把附近旧证据改写成当前时间。
         if self._store and self._data_dir and self._library_dir and self._vlm:
@@ -616,6 +708,9 @@ class InMemoryFrameInspector:
                                 [{"path": frame_path, "timestamp_ms": timestamp_ms}],
                                 video_id=str(video_id),
                                 question=query,
+                                trace_id=str(trace_id) if trace_id else None,
+                                task_id=str(trace_id) if trace_id else None,
+                                agent_id="vlm_understanding_agent",
                             ),
                             timeout=self._vlm_timeout_seconds,
                         )

@@ -26,6 +26,7 @@ class InspectFrameInput(DomainModel):
     video_id: UUID
     timestamp_ms: int = Field(ge=0)
     query: str = Field(min_length=1, max_length=2_000)
+    trace_id: UUID | None = None
 
 
 class EvidenceBatch(DomainModel):
@@ -74,6 +75,7 @@ def build_video_tool_registry(
             video_id=args.video_id,
             timestamp_ms=args.timestamp_ms,
             query=args.query,
+            trace_id=args.trace_id,
         )
         return EvidenceBatch(items=list(items))
 

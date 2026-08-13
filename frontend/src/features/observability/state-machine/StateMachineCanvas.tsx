@@ -5,7 +5,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   useNodesInitialized,
   useReactFlow,
@@ -44,17 +43,6 @@ function GraphAutoFit({ nodes }: { nodes: MachineNodeType[] }) {
   return null;
 }
 
-function minimapColor(node: MachineNodeType) {
-  return {
-    completed: "#2ee6aa",
-    running: "#f5b654",
-    failed: "#ff6b7a",
-    unavailable: "#ff6b7a",
-    ready: "#51c9e8",
-    pending: "#435667",
-  }[node.data.status];
-}
-
 export function StateMachineCanvas({ graph }: StateMachineCanvasProps) {
   const counts = useMemo(
     () => ({
@@ -89,13 +77,6 @@ export function StateMachineCanvas({ graph }: StateMachineCanvasProps) {
           <GraphAutoFit nodes={graph.nodes} />
           <Background color="rgba(120, 157, 183, .16)" gap={22} size={1} variant={BackgroundVariant.Dots} />
           <Controls position="bottom-left" showInteractive={false} />
-          <MiniMap
-            className="machine-minimap"
-            maskColor="rgba(5, 12, 20, .74)"
-            nodeColor={(node) => minimapColor(node as MachineNodeType)}
-            pannable
-            zoomable
-          />
         </ReactFlow>
       </div>
       <footer className="machine-legend">
@@ -103,7 +84,7 @@ export function StateMachineCanvas({ graph }: StateMachineCanvasProps) {
         <span className="running"><i />正在调用</span>
         <span className="completed"><i />本次已完成</span>
         <span className="pending"><i />尚未进入</span>
-        <small>默认适配全部节点 · 滚轮可缩放 · 点击节点查看当前摘要</small>
+        <small>默认适配全部节点 · 右下角拖动缩略图已移除 · 此拓扑只用于技术排障</small>
       </footer>
     </section>
   );

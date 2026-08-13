@@ -14,6 +14,7 @@ from lets_go_video_agent.application.services import (
     VideoService,
     create_budget,
 )
+from lets_go_video_agent.application.skill_projects import SkillProjectService
 from lets_go_video_agent.application.skill_studio import SkillPolicyValidator, SkillStudioService
 from lets_go_video_agent.config import Settings
 from lets_go_video_agent.fixtures import DEMO_VIDEO_ID, seed_demo
@@ -36,7 +37,7 @@ from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClie
 from lets_go_video_agent.media.local_pipeline import LocalProcessingManager
 from lets_go_video_agent.media.local_storage import LocalUploadStore
 from lets_go_video_agent.media.url_policy import SourceUrlPolicy
-from lets_go_video_agent.media.video_library import sync_video_library
+from lets_go_video_agent.media.video_library import organize_video_library, sync_video_library
 from lets_go_video_agent.media.ytdlp import YtDlpAdapter
 
 
@@ -53,6 +54,7 @@ class Container:
     videos: VideoService
     questions: QuestionService
     skills: SkillStudioService
+    skill_projects: SkillProjectService
     processing: LocalProcessingManager
     cost_ledger: CostLedger
     harness: AgentHarness
@@ -60,12 +62,14 @@ class Container:
 
     async def startup(self) -> None:
         await self.store.ping()
+        await self.cost_ledger.hydrate()
         if self.settings.seed_demo_data:
             await seed_demo(self.store)
         elif await self.store.get(DEMO_VIDEO_ID) is not None:
             # 演示夹具只服务测试/演示环境，关闭配置后自动从本地目录中移除。
             await self.store.delete(DEMO_VIDEO_ID)
         await sync_video_library(self.store, self.settings.video_library_dir)
+        await organize_video_library(self.store, self.settings.video_library_dir)
 
     async def shutdown(self) -> None:
         await self.store.close()
@@ -92,6 +96,7 @@ def build_container(settings: Settings) -> Container:
     cost_ledger = CostLedger(
         settings.local_data_dir / "costs" / "model-usage.jsonl",
         events=store,
+        hydrate_events=settings.repository_backend == "memory",
     )
     llm = None
     if settings.llm_provider == "deepseek" and settings.llm_api_key:
@@ -192,12 +197,22 @@ def build_container(settings: Settings) -> Container:
             proxy_url=settings.outbound_http_proxy,
         ),
     )
+    skill_projects = SkillProjectService(
+        store=store,
+        videos=video_service,
+        processing=processing,
+        llm_provider=settings.llm_provider,
+        llm_model=settings.llm_model,
+        vlm_provider=settings.vlm_provider,
+        vlm_model=settings.vlm_model,
+    )
     return Container(
         settings=settings,
         store=store,
         videos=video_service,
         questions=question_service,
         skills=skills,
+        skill_projects=skill_projects,
         processing=processing,
         cost_ledger=cost_ledger,
         harness=harness,

@@ -107,6 +107,7 @@ class VideoService:
                 if rights_confirmed
                 else "metadata_only_waiting_for_rights_confirmation"
             ),
+            metadata={"library_scope": "understanding", "library_task_kind": "web"},
         )
         await self._videos.add(video)
         return video
@@ -192,12 +193,15 @@ class QuestionService:
             skill_id=skill.id if skill else None,
             skill_version=skill_version.version if skill_version else None,
             skill_name=skill.display_name if skill else None,
-            skill_context=(skill_version.content.runtime_instructions() if skill_version else None),
+            skill_context=(
+                skill_version.content.text_instructions("qa") if skill_version else None
+            ),
+            trace_id=trace_id,
         )
         await self._answers.add_question(question)
 
         run = AgentRun(
-            id=trace_id or uuid4(),
+            id=trace_id or question.trace_id or uuid4(),
             agent_name="video_qa_graph",
             agent_version="0.1.0",
             video_id=video_id,

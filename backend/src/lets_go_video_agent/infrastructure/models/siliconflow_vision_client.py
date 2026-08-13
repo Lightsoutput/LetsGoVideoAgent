@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -13,6 +14,14 @@ import httpx
 
 from lets_go_video_agent.domain.observability import UsageEvent
 from lets_go_video_agent.infrastructure.models.deepseek_client import CostLedger
+
+
+@dataclass(frozen=True, slots=True)
+class SiliconFlowVisionPrices:
+    """Qwen3-VL-32B-Instruct 官方人民币价格（每 100 万 tokens）。"""
+
+    input: Decimal = Decimal("1")
+    output: Decimal = Decimal("4")
 
 
 class SiliconFlowVisionClient:
@@ -29,6 +38,7 @@ class SiliconFlowVisionClient:
         ledger: CostLedger,
         timeout_seconds: float = 180,
         proxy_url: str | None = None,
+        prices: SiliconFlowVisionPrices | None = None,
     ) -> None:
         self.model = model
         self._api_key = api_key
@@ -36,6 +46,7 @@ class SiliconFlowVisionClient:
         self._ledger = ledger
         self._timeout = timeout_seconds
         self._proxy_url = proxy_url
+        self._prices = prices or SiliconFlowVisionPrices()
 
     async def _balance(self, client: httpx.AsyncClient) -> Decimal | None:
         try:
@@ -56,6 +67,10 @@ class SiliconFlowVisionClient:
         *,
         video_id: str | None = None,
         question: str | None = None,
+        skill_context: str | None = None,
+        trace_id: str | None = None,
+        task_id: str | None = None,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if not frames:
             return []
@@ -85,6 +100,12 @@ class SiliconFlowVisionClient:
             prompt += (
                 f"\n用户问题：{question}。围绕问题检查相关区域和细节，但不要预设视频类别或字段；"
                 "若画面不足以回答，明确指出缺失信息。"
+            )
+        if skill_context:
+            prompt += (
+                "\n以下是用户审核发布的类别 Skill 视觉规则，只用于提示应关注的画面结构；"
+                "不得用样本规律覆盖当前画面直接证据：\n"
+                f"{skill_context[:4_000]}"
             )
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         for frame in frames:
@@ -117,10 +138,24 @@ class SiliconFlowVisionClient:
             after = await self._balance(client)
         body = response.json()
         usage = body.get("usage") or {}
-        actual_cost = (
+        balance_cost = (
             max(Decimal(), before - after)
             if before is not None and after is not None
             else Decimal()
+        )
+        input_tokens = int(usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("completion_tokens") or 0)
+        token_cost = (
+            Decimal(input_tokens) * self._prices.input
+            + Decimal(output_tokens) * self._prices.output
+        ) / Decimal("1000000")
+        # 余额接口的展示精度可能低于单次请求费用，前后差值会得到 0。
+        # 此时不能把一次真实 VLM 调用误报为免费，改用官方 token 单价回算。
+        actual_cost = balance_cost if balance_cost > 0 else token_cost
+        pricing_source = (
+            "SiliconFlow account balance delta"
+            if balance_cost > 0
+            else "SiliconFlow official token pricing (CNY 1 input / 4 output per M tokens)"
         )
         record = {
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -128,11 +163,15 @@ class SiliconFlowVisionClient:
                 "model": body.get("model", self.model),
                 "purpose": "video_visual_understanding",
                 "video_id": video_id,
-                "input_tokens": int(usage.get("prompt_tokens") or 0),
-                "output_tokens": int(usage.get("completion_tokens") or 0),
+                "trace_id": trace_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
                 "total_tokens": int(usage.get("total_tokens") or 0),
+                "image_count": len(frames),
                 "cost_cny": str(actual_cost.quantize(Decimal("0.000000001"))),
-                "pricing_source": "SiliconFlow account balance delta",
+                "pricing_source": pricing_source,
             }
         await self._ledger.record(
             record,
@@ -140,13 +179,16 @@ class SiliconFlowVisionClient:
                 provider="siliconflow",
                 model=str(body.get("model", self.model)),
                 purpose="video_visual_understanding",
-                input_tokens=int(usage.get("prompt_tokens") or 0),
-                output_tokens=int(usage.get("completion_tokens") or 0),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 image_count=len(frames),
                 original_cost=actual_cost,
                 cost_cny=actual_cost,
-                pricing_version="SiliconFlow account balance delta",
+                pricing_version=pricing_source,
                 video_id=_optional_uuid(video_id),
+                trace_id=_optional_uuid(trace_id),
+                task_id=_optional_uuid(task_id),
+                agent_id=agent_id,
             ),
         )
         content_text = str(body["choices"][0]["message"].get("content") or "")

@@ -19,6 +19,7 @@ import { formatCny } from "@/lib/format";
 
 import { buildAgentGraph, buildRuntimeGraph } from "./state-machine/builders";
 import { StateMachineCanvas } from "./state-machine/StateMachineCanvas";
+import { agentLabel } from "./agentCatalog";
 
 type Tab = "system" | "cost" | "trace";
 type GraphView = "agents" | "runtime";
@@ -103,7 +104,7 @@ export function ObservabilityPanel({
     try {
       const [systemResult, usageResult, traceResult, agentRunResult] = await Promise.all([
         getSystemObservability(),
-        getUsageSummary(videoId ?? undefined),
+        getUsageSummary(traceId ? undefined : videoId ?? undefined, traceId ?? undefined),
         traceId ? getAgentTrace(traceId) : Promise.resolve([]),
         traceId ? getAgentRun(traceId).catch(() => null) : Promise.resolve(null),
       ]);
@@ -123,7 +124,7 @@ export function ObservabilityPanel({
     let active = true;
     const request = Promise.all([
       getSystemObservability(),
-      getUsageSummary(videoId ?? undefined),
+      getUsageSummary(traceId ? undefined : videoId ?? undefined, traceId ?? undefined),
       traceId ? getAgentTrace(traceId) : Promise.resolve([]),
       traceId ? getAgentRun(traceId).catch(() => null) : Promise.resolve(null),
     ]);
@@ -153,7 +154,7 @@ export function ObservabilityPanel({
     const poll = () => {
       void Promise.all([
         getAgentTrace(traceId),
-        getUsageSummary(videoId ?? undefined),
+        getUsageSummary(traceId ? undefined : videoId ?? undefined, traceId ?? undefined),
         getAgentRun(traceId).catch(() => null),
       ])
         .then(([traceResult, usageResult, agentRunResult]) => {
@@ -368,7 +369,7 @@ export function ObservabilityPanel({
           {tab === "cost" && (
             <div className="ops-cost">
               <section className="cost-metrics">
-                <span><small>当前视频累计</small><b>{formatCny(usage.total_cost_cny)}</b></span>
+                <span><small>{traceId ? "当前任务累计" : "当前视频累计"}</small><b>{formatCny(usage.total_cost_cny)}</b></span>
                 <span><small>API 调用</small><b>{usage.call_count}</b></span>
                 <span><small>输入 Token</small><b>{usage.total_input_tokens.toLocaleString()}</b></span>
                 <span><small>输出 Token</small><b>{usage.total_output_tokens.toLocaleString()}</b></span>
@@ -394,7 +395,7 @@ export function ObservabilityPanel({
                 <div className="ops-card-title"><strong>最近调用</strong><span>最多显示 200 条</span></div>
                 {usage.items.slice().reverse().map((item) => (
                   <article key={item.id}>
-                    <div><strong>{item.purpose}</strong><small>{item.provider} · {item.model}</small></div>
+                    <div><strong>{item.purpose}</strong><small>{agentLabel(item.agent_id)} · {item.provider} / {item.model}</small></div>
                     <span>{item.input_tokens + item.output_tokens} tokens{item.image_count ? ` · ${item.image_count} 图` : ""}</span>
                     <b>{formatCny(item.cost_cny)}</b>
                   </article>
@@ -419,13 +420,32 @@ export function ObservabilityPanel({
                   <p>{processing.message}</p>
                 </section>
               )}
+              {processing && traceId === processing.trace_id && processing.agent_tasks.length > 0 && (
+                <section className="trace-agent-workboard" aria-label="Agent 实时工作台">
+                  <header><div><small>LIVE ASSIGNMENTS</small><h3>这条视频现在由谁处理</h3></div><span>{processing.agent_tasks.filter((task) => task.status === "running").length} 个并行任务</span></header>
+                  <div>
+                    {processing.agent_tasks.map((task) => (
+                      <article className={`status-${task.status}`} key={task.agent_id}>
+                        <div><strong>{task.agent_number} {task.display_name}</strong><span>{statusLabel(task.status)}</span></div>
+                        <small>{task.role} · {task.phase}</small>
+                        <p>{task.message}</p>
+                        <progress max={1} value={task.progress} />
+                        <footer><span>{task.total_units ? `${task.completed_units}/${task.total_units}` : `${Math.round(task.progress * 100)}%`}</span><code>{task.model ? `${task.model_provider} / ${task.model}` : "本地工具或规则"}</code></footer>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
               {!traceId && <div className="ops-empty">上传或选择正在处理的视频后，即可实时查看 Agent Trace；问答 Trace 也会显示在这里。</div>}
               {traceId && trace.length === 0 && !loading && <div className="ops-empty">该运行暂无 Trace 事件。</div>}
-              <div className="graph-view-switch" role="tablist" aria-label="状态机类型">
-                <button className={graphView === "agents" ? "active" : ""} onClick={() => setGraphView("agents")} role="tab" type="button">多 Agent 工作流</button>
-                <button className={graphView === "runtime" ? "active" : ""} onClick={() => setGraphView("runtime")} role="tab" type="button">Harness · 记忆 · MCP</button>
-              </div>
-              <StateMachineCanvas graph={graphView === "agents" ? agentGraph : runtimeGraph} />
+              <details className="technical-topology">
+                <summary><strong>技术拓扑与状态机</strong><span>排障时展开；日常观察以上方任务工位为准</span></summary>
+                <div className="graph-view-switch" role="tablist" aria-label="状态机类型">
+                  <button className={graphView === "agents" ? "active" : ""} onClick={() => setGraphView("agents")} role="tab" type="button">多 Agent 工作流</button>
+                  <button className={graphView === "runtime" ? "active" : ""} onClick={() => setGraphView("runtime")} role="tab" type="button">Harness · 记忆 · MCP</button>
+                </div>
+                <StateMachineCanvas graph={graphView === "agents" ? agentGraph : runtimeGraph} />
+              </details>
               <details className="trace-event-log">
                 <summary><strong>原始 Trace 事件</strong><span>{trace.length} 条 · 用于逐步审计</span></summary>
                 <div>
@@ -434,7 +454,7 @@ export function ObservabilityPanel({
                       <div className="trace-sequence">{String(event.sequence).padStart(2, "0")}</div>
                       <div className="trace-detail">
                         <div><span>{eventLabel(event.event_type)}</span><time>{new Date(event.occurred_at).toLocaleTimeString()}</time></div>
-                        <strong>{event.name}</strong>
+                        <strong>{event.agent_id ? agentLabel(event.agent_id) : event.name}</strong>
                         <p>{event.summary || "无公开摘要"}</p>
                         {Object.keys(event.attributes).length > 0 && (
                           <details><summary>结构化属性</summary><pre>{JSON.stringify(event.attributes, null, 2)}</pre></details>

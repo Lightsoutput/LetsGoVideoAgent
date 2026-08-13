@@ -25,6 +25,10 @@ class OllamaVisionClient:
         *,
         video_id: str | None = None,
         question: str | None = None,
+        skill_context: str | None = None,
+        trace_id: str | None = None,
+        task_id: str | None = None,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """一次分析一组时间有序的画面，返回可供分段与问答使用的语义观察。"""
         if not frames:
@@ -58,6 +62,11 @@ class OllamaVisionClient:
             prompt += (
                 f"\n用户问题：{question}。围绕问题检查相关区域和细节，但不要预设视频类别或字段；"
                 "信息不足时明确说明。"
+            )
+        if skill_context:
+            prompt += (
+                "\n以下是已发布的类别 Skill 视觉规则，只用于选择观察重点，不得覆盖当前画面证据：\n"
+                f"{skill_context[:4_000]}"
             )
         payload = {
             "model": self.model,

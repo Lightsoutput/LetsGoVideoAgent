@@ -4,6 +4,7 @@ import asyncio
 import re
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from pydantic import Field
 
@@ -80,6 +81,7 @@ class QAInvestigator:
                         "video_id": str(question.video_id),
                         "timestamp_ms": question.target.timestamp_ms,
                         "query": question.query,
+                        "trace_id": str(session.run.id),
                     },
                 )
             )
@@ -163,7 +165,11 @@ class QAInvestigator:
         )
         if self._llm and evidence:
             draft = await self._compose_with_llm(
-                question, evidence, summary_question, web_sources
+                question,
+                evidence,
+                summary_question,
+                web_sources,
+                trace_id=session.run.id,
             )
         else:
             draft = self._compose(question, evidence, web_sources)
@@ -253,6 +259,7 @@ class QAInvestigator:
         evidence: list[Evidence],
         summary_question: bool,
         web_sources: list[WebReference],
+        trace_id: UUID,
     ) -> DraftAnswer:
         """LLM 只能组织已检索证据；引用仍由代码映射，不能让模型伪造 ID。"""
         llm = self._llm
@@ -312,6 +319,9 @@ class QAInvestigator:
             ),
             purpose="video_question_answer",
             video_id=str(question.video_id),
+            trace_id=str(trace_id),
+            task_id=str(trace_id),
+            agent_id="qa_investigator",
             # 思考 token 与最终答案共享 max_tokens；全片总结需要为推理预留足够空间。
             max_tokens=12_000 if summary_question else 6_000,
             thinking=True,

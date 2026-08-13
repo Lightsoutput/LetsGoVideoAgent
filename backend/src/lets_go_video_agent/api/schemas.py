@@ -9,7 +9,7 @@ from lets_go_video_agent.domain.common import DomainModel
 from lets_go_video_agent.domain.observability import TraceEvent, UsageEvent
 from lets_go_video_agent.domain.qa import GlobalTarget, QuestionTarget
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
-from lets_go_video_agent.domain.skill import Skill
+from lets_go_video_agent.domain.skill import Skill, SkillProject
 from lets_go_video_agent.domain.timeline import TimelineArtifact
 from lets_go_video_agent.domain.video import Video
 
@@ -39,6 +39,17 @@ class GenerateSkillRequest(DomainModel):
     display_name: str | None = Field(default=None, max_length=120)
 
 
+class RegenerateSkillRequest(DomainModel):
+    """基于项目最新样本为已有 Skill 生成新的草案版本。"""
+
+    video_ids: list[UUID] = Field(min_length=1, max_length=8)
+    goal: str | None = Field(default=None, max_length=2_000)
+
+
+class DeleteSkillsRequest(DomainModel):
+    skill_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
 class RefineSkillRequest(DomainModel):
     instruction: str = Field(min_length=2, max_length=2_000)
     base_version: int | None = Field(default=None, ge=1)
@@ -54,6 +65,25 @@ class RollbackSkillRequest(DomainModel):
 
 class SkillListResponse(DomainModel):
     items: list[Skill]
+
+
+class SkillProjectListResponse(DomainModel):
+    items: list[SkillProject]
+
+
+class CreateSkillProjectRequest(DomainModel):
+    name: str = Field(min_length=1, max_length=120)
+    goal: str = Field(min_length=4, max_length=2_000)
+    description: str = Field(default="", max_length=600)
+
+
+class AddSkillProjectUrlsRequest(DomainModel):
+    urls: list[str] = Field(min_length=1, max_length=50)
+    rights_confirmed: bool = False
+
+
+class AttachProjectSkillRequest(DomainModel):
+    skill_id: UUID
 
 
 class TimelineResponse(DomainModel):

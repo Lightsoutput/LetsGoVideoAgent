@@ -60,6 +60,27 @@ export interface ProcessingRun {
   message: string;
   error: string | null;
   attempt_count: number;
+  agent_tasks: ProcessingAgentTask[];
+}
+
+export interface ProcessingAgentTask {
+  agent_id: string;
+  agent_number: string;
+  display_name: string;
+  role: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  phase: string;
+  task: string;
+  message: string;
+  progress: number;
+  completed_units: number;
+  total_units: number | null;
+  model_provider: string | null;
+  model: string | null;
+  parallel_group: string | null;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
 }
 
 export type TimelineKind =
@@ -158,6 +179,42 @@ export interface SkillTerm {
 
 export interface SkillContent {
   applicable_video_types: string[];
+  category_essence: {
+    extraction_status: "sample-derived" | "insufficient";
+    one_sentence_essence: string;
+    content_core: string[];
+    visual_signature: string[];
+    narration_copywriting: string[];
+    storytelling_engine: string[];
+    pacing_editing: string[];
+    recurring_devices: string[];
+    viewer_value: string[];
+    evidence: Array<{
+      insight: string;
+      supporting_video_ids: string[];
+      observations: string[];
+    }>;
+    confidence_notes: string[];
+  };
+  category_profile: {
+    category_name: string;
+    style_summary: string;
+    common_formats: string[];
+    typical_content: string[];
+    narrative_patterns: string[];
+    visual_language: string[];
+    audience_expectations: string[];
+    stable_signals: string[];
+    variable_signals: string[];
+  };
+  runtime_targets: Array<{
+    target_id: string;
+    target_name: string;
+    provider: string;
+    model: string;
+    stages: string[];
+    instructions: string[];
+  }>;
   objectives: string[];
   terminology: SkillTerm[];
   segmentation_hints: string[];
@@ -172,6 +229,8 @@ export interface SkillContent {
   negative_examples: string[];
   boundary_conditions: string[];
   known_limitations: string[];
+  default_questions: Array<{ question: string; purpose: string; answer_structure: string[] }>;
+  output_templates: Array<{ name: string; use_when: string; fields: string[] }>;
 }
 
 export interface SkillValidation {
@@ -215,6 +274,110 @@ export interface SkillDetail {
   skill: Skill;
   versions: SkillVersion[];
   bound_video_ids: string[];
+}
+
+export interface SkillProject {
+  id: string;
+  name: string;
+  description: string;
+  goal: string;
+  status: "active" | "processing" | "ready" | "attention";
+  skill_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillProjectItem {
+  id: string;
+  project_id: string;
+  source_url: string;
+  video_id: string | null;
+  title: string;
+  status: "queued" | "importing" | "processing" | "ready" | "failed";
+  trace_id: string | null;
+  stage: string;
+  stage_label: string;
+  progress: number;
+  current_agent: string | null;
+  message: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  agent_tasks: ProcessingAgentTask[];
+  insight: {
+    video_format: string;
+    purpose: string;
+    summary: string;
+    themes: string[];
+    chapters: Array<{
+      title: string;
+      summary: string;
+      start_ms: number;
+      end_ms: number;
+    }>;
+    representative_frames: Array<{
+      title: string;
+      description: string;
+      timestamp_ms: number;
+      snapshot_filename: string | null;
+    }>;
+  } | null;
+}
+
+export interface SkillProjectAgent {
+  id: string;
+  display_name: string;
+  role: string;
+  avatar: string;
+  status: "idle" | "working" | "attention";
+  video_id: string | null;
+  video_title: string | null;
+  task: string;
+  progress: number;
+  trace_id: string | null;
+  active_tasks: number;
+  message: string;
+  completed_units: number;
+  total_units: number | null;
+  model_provider: string | null;
+  model: string | null;
+  assignments: Array<{
+    video_id: string;
+    video_title: string;
+    trace_id: string | null;
+    task: string;
+    message: string;
+    progress: number;
+    completed_units: number;
+    total_units: number | null;
+  }>;
+}
+
+export interface SkillProjectWorkspace {
+  project: SkillProject;
+  items: SkillProjectItem[];
+  agents: SkillProjectAgent[];
+  recent_logs: TraceEvent[];
+  cost_summary: {
+    total_cost_cny: string;
+    call_count: number;
+    input_tokens: number;
+    output_tokens: number;
+    image_count: number;
+    by_model: Record<string, string>;
+    by_agent: Record<string, string>;
+    by_video: Record<string, string>;
+    by_purpose: Record<string, string>;
+  };
+  model_routes: Array<{
+    target: string;
+    provider: string;
+    model: string;
+    agent_id: string;
+    agent_display_name: string;
+    stages: string[];
+    configured: boolean;
+  }>;
 }
 
 export interface TraceEvent {

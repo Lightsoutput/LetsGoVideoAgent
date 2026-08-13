@@ -22,7 +22,7 @@ from lets_go_video_agent.media.subprocesses import (
 from lets_go_video_agent.media.url_policy import SourceUrlPolicy
 
 DnsResolver = Callable[[str, int], Awaitable[Sequence[str]]]
-_SAFE_IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_SAFE_IDEMPOTENCY_PART = re.compile(r'^[^<>:"|?*\x00-\x1f]{1,160}$')
 
 
 class YtDlpError(RuntimeError):
@@ -137,8 +137,16 @@ class YtDlpAdapter:
         if not rights_confirmed:
             raise MediaRightsNotConfirmedError("下载视频前必须确认拥有相应使用权")
         safe_url = await self._validate_remote_url(url)
-        if not _SAFE_IDEMPOTENCY_KEY.fullmatch(idempotency_key):
-            raise ValueError("幂等键仅允许 1-80 位字母、数字、下划线或连字符")
+        key_parts = Path(idempotency_key.replace("\\", "/")).parts
+        if (
+            not key_parts
+            or len(key_parts) > 6
+            or any(
+                part in {"", ".", ".."} or not _SAFE_IDEMPOTENCY_PART.fullmatch(part)
+                for part in key_parts
+            )
+        ):
+            raise ValueError("幂等目录必须是库内安全相对路径，且不能包含 Windows 非法字符")
 
         job_dir = self._resolve_inside_root(idempotency_key)
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -314,7 +322,7 @@ class YtDlpAdapter:
         self, expected_url_fingerprint: str, current_manifest: Path
     ) -> DownloadedMedia | None:
         """相同 URL 已下载时跨任务复用媒体，避免重试或重启后重复消耗带宽。"""
-        for manifest in self._root.glob("*/download-complete.json"):
+        for manifest in self._root.rglob("download-complete.json"):
             if manifest == current_manifest:
                 continue
             try:

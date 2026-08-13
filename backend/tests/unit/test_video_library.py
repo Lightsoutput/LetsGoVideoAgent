@@ -4,9 +4,10 @@ import pytest
 
 from lets_go_video_agent.domain.common import Provenance, TimeRange
 from lets_go_video_agent.domain.timeline import TimelineArtifact, TimelineKind
-from lets_go_video_agent.domain.video import VideoStatus
+from lets_go_video_agent.domain.video import Video, VideoStatus, WebSource
 from lets_go_video_agent.infrastructure.memory import InMemoryStore
 from lets_go_video_agent.media.video_library import (
+    organize_video_library,
     resolve_video_source,
     sync_video_library,
 )
@@ -60,3 +61,34 @@ async def test_local_video_library_is_idempotent_and_restores_results(tmp_path: 
     assert len(restored_videos) == 1
     assert restored_videos[0].status == VideoStatus.READY
     assert len(await restored.list_for_video(video.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_video_library_organizes_understanding_task_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "videos"
+    legacy = library / "legacy-id"
+    legacy.mkdir(parents=True)
+    media = legacy / "BV1234567890.mp4"
+    media.write_bytes(b"video")
+    video = Video(
+        title="可读标题",
+        source=WebSource(
+            original_url="https://www.bilibili.com/video/BV1234567890/",
+            rights_confirmed=True,
+        ),
+        source_object_key="library/legacy-id/BV1234567890.mp4",
+    )
+    store = InMemoryStore()
+    await store.add(video)
+
+    changes = await organize_video_library(store, library)
+    updated = await store.get(video.id)
+
+    assert changes[0]["status"] == "moved"
+    assert updated is not None
+    assert updated.source_object_key is not None
+    assert updated.source_object_key.startswith("library/understanding-tasks/")
+    assert "BV1234567890_可读标题" in updated.source_object_key
+    assert (library / updated.source_object_key.removeprefix("library/")).is_file()

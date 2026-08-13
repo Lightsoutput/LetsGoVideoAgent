@@ -12,9 +12,15 @@ from pathlib import Path
 from typing import Any, TypeVar
 from uuid import UUID
 
+from lets_go_video_agent.agents.catalog import agent_trace_attributes, get_agent
 from lets_go_video_agent.domain.common import Provenance, TimeRange, utc_now
 from lets_go_video_agent.domain.observability import TraceEvent, TraceEventType
-from lets_go_video_agent.domain.processing import ProcessingRun, ProcessingStatus
+from lets_go_video_agent.domain.processing import (
+    AgentTaskStatus,
+    ProcessingAgentTask,
+    ProcessingRun,
+    ProcessingStatus,
+)
 from lets_go_video_agent.domain.semantic import NarrativeContext, SemanticEvent
 from lets_go_video_agent.domain.timeline import ObservationType, TimelineArtifact, TimelineKind
 from lets_go_video_agent.domain.video import VideoStatus, WebSource
@@ -28,7 +34,11 @@ from lets_go_video_agent.infrastructure.models.siliconflow_vision_client import 
 )
 from lets_go_video_agent.infrastructure.search.mcp_search_client import McpSearchClient
 from lets_go_video_agent.infrastructure.search.searxng_client import SearxngClient
-from lets_go_video_agent.media.video_library import library_object_key, resolve_video_source
+from lets_go_video_agent.media.video_library import (
+    library_object_key,
+    resolve_video_source,
+    video_library_relative_directory,
+)
 from lets_go_video_agent.media.ytdlp import YtDlpAdapter
 
 # 修改分析策略后递增，避免旧字幕、视觉理解和分段结果继续污染新任务。
@@ -1149,7 +1159,21 @@ class LocalProcessingManager:
         existing = self._runs.get(video_id)
         if existing and existing.status in {ProcessingStatus.QUEUED, ProcessingStatus.RUNNING}:
             return existing.model_copy(deep=True)
-        run = ProcessingRun(video_id=video_id)
+        run = ProcessingRun(
+            video_id=video_id,
+            agent_tasks=[
+                self._new_agent_task(agent_id)
+                for agent_id in (
+                    "ingestion_agent",
+                    "audio_perception_agent",
+                    "visual_sampling_agent",
+                    "ocr_perception_agent",
+                    "vlm_understanding_agent",
+                    "speaker_analysis_agent",
+                    "timeline_curator_agent",
+                )
+            ],
+        )
         self._runs[video_id] = run
         self._attempts[video_id] = 0
         self._trace_sequences[run.trace_id] = 0
@@ -1157,6 +1181,77 @@ class LocalProcessingManager:
         self._trace_locks[run.trace_id] = asyncio.Lock()
         self._tasks[video_id] = asyncio.create_task(self._process(run))
         return run.model_copy(deep=True)
+
+    def _new_agent_task(self, agent_id: str) -> ProcessingAgentTask:
+        identity = get_agent(agent_id)
+        provider: str | None = None
+        model: str | None = None
+        if agent_id == "audio_perception_agent":
+            provider, model = "local", self._asr_model
+        elif agent_id == "ocr_perception_agent":
+            provider, model = "local", "RapidOCR / ONNX Runtime"
+        elif agent_id == "vlm_understanding_agent" and self._vlm is not None:
+            provider, model = self._vlm.provider, self._vlm.model
+        elif agent_id == "timeline_curator_agent" and self._llm is not None:
+            provider, model = self._llm.provider, self._llm.model
+        return ProcessingAgentTask(
+            agent_id=agent_id,
+            agent_number=identity.number,
+            display_name=identity.name,
+            role=identity.role,
+            model_provider=provider,
+            model=model,
+        )
+
+    def _set_agent_task(
+        self,
+        run: ProcessingRun,
+        agent_id: str,
+        *,
+        status: AgentTaskStatus | None = None,
+        phase: str | None = None,
+        task: str | None = None,
+        message: str | None = None,
+        progress: float | None = None,
+        completed_units: int | None = None,
+        total_units: int | None = None,
+        parallel_group: str | None = None,
+    ) -> None:
+        """细粒度刷新 Agent 工位；线程回调也只写当前运行对象的原子字段。"""
+
+        agent_task = next(
+            (item for item in run.agent_tasks if item.agent_id == agent_id), None
+        )
+        if agent_task is None:
+            agent_task = self._new_agent_task(agent_id)
+            run.agent_tasks.append(agent_task)
+        now = utc_now()
+        if status is not None:
+            agent_task.status = status
+            if status is AgentTaskStatus.RUNNING and agent_task.started_at is None:
+                agent_task.started_at = now
+            if status in {
+                AgentTaskStatus.COMPLETED,
+                AgentTaskStatus.FAILED,
+                AgentTaskStatus.SKIPPED,
+            }:
+                agent_task.finished_at = now
+        if phase is not None:
+            agent_task.phase = phase
+        if task is not None:
+            agent_task.task = task
+        if message is not None:
+            agent_task.message = message
+        if progress is not None:
+            agent_task.progress = max(0, min(1, progress))
+        if completed_units is not None:
+            agent_task.completed_units = completed_units
+        if total_units is not None:
+            agent_task.total_units = total_units
+        if parallel_group is not None:
+            agent_task.parallel_group = parallel_group
+        agent_task.updated_at = now
+        self._runs[run.video_id] = run.model_copy(deep=True)
 
     async def _emit_processing_stage(
         self,
@@ -1234,6 +1329,7 @@ class LocalProcessingManager:
         async with lock:
             sequence = self._trace_sequences.get(run.trace_id, 0) + 1
             self._trace_sequences[run.trace_id] = sequence
+            public_attributes = {**attributes, **agent_trace_attributes(name)}
             await self._store.append_trace_event(
                 TraceEvent(
                     trace_id=run.trace_id,
@@ -1245,7 +1341,7 @@ class LocalProcessingManager:
                     video_id=run.video_id,
                     task_id=run.id,
                     agent_id=name,
-                    attributes=attributes,
+                    attributes=public_attributes,
                 )
             )
 
@@ -1261,13 +1357,27 @@ class LocalProcessingManager:
         parallel_group: str | None = None,
     ) -> T:
         """执行一个可观测节点；同一 parallel_group 的节点由 asyncio 并发调度。"""
+        agent_task = self._new_agent_task(name)
         attributes: dict[str, object] = {
             "phase": phase,
             "node_id": name,
             "depends_on": depends_on,
+            "task": label,
+            "model_provider": agent_task.model_provider or "none",
+            "model": agent_task.model or "none",
         }
         if parallel_group:
             attributes["parallel_group"] = parallel_group
+        self._set_agent_task(
+            run,
+            name,
+            status=AgentTaskStatus.RUNNING,
+            phase=phase,
+            task=label,
+            message=f"正在执行：{label}",
+            progress=0.01,
+            parallel_group=parallel_group,
+        )
         await self._append_processing_trace(
             run,
             event_type=TraceEventType.AGENT_STARTED,
@@ -1279,6 +1389,12 @@ class LocalProcessingManager:
         try:
             result = await operation()
         except Exception as exc:
+            self._set_agent_task(
+                run,
+                name,
+                status=AgentTaskStatus.FAILED,
+                message=f"{label}失败：{type(exc).__name__}",
+            )
             await self._append_processing_trace(
                 run,
                 event_type=TraceEventType.AGENT_FAILED,
@@ -1288,6 +1404,13 @@ class LocalProcessingManager:
                 attributes=attributes,
             )
             raise
+        self._set_agent_task(
+            run,
+            name,
+            status=AgentTaskStatus.COMPLETED,
+            message=f"{label}已完成",
+            progress=1,
+        )
         await self._append_processing_trace(
             run,
             event_type=TraceEventType.AGENT_COMPLETED,
@@ -1312,6 +1435,42 @@ class LocalProcessingManager:
             # 网页媒体导入占总进度前 25%，后续内容理解映射到剩余 75%，避免进度倒退。
             progress = 0.25 + progress * 0.75
         run.stage, run.stage_label, run.progress, run.message = stage, label, progress, message
+        stage_agent = PROCESSING_STAGE_AGENTS.get(stage)
+        if stage_agent and stage_agent not in {"perception_coordinator"}:
+            self._set_agent_task(
+                run,
+                stage_agent,
+                status=AgentTaskStatus.RUNNING,
+                phase="媒体接入" if stage_agent == "ingestion_agent" else "语义融合",
+                task=label,
+                message=message,
+                progress=max(0.01, min(0.98, progress)),
+            )
+        if stage == "parallel_perception":
+            self._set_agent_task(
+                run,
+                "ingestion_agent",
+                status=AgentTaskStatus.COMPLETED,
+                message="媒体下载、合并与探测已完成",
+                progress=1,
+            )
+        elif stage == "ready":
+            self._set_agent_task(
+                run,
+                "timeline_curator_agent",
+                status=AgentTaskStatus.COMPLETED,
+                message=message,
+                progress=1,
+            )
+        elif stage == "failed":
+            for task in run.agent_tasks:
+                if task.status is AgentTaskStatus.RUNNING:
+                    self._set_agent_task(
+                        run,
+                        task.agent_id,
+                        status=AgentTaskStatus.FAILED,
+                        message=message,
+                    )
         await self._emit_processing_stage(
             run,
             stage=stage,
@@ -1383,6 +1542,15 @@ class LocalProcessingManager:
                 (utc_now() - run.started_at).total_seconds() if run.started_at else 0
             )
             self._runs[run.video_id] = run.model_copy(deep=True)
+            self._set_agent_task(
+                run,
+                "ocr_perception_agent",
+                status=AgentTaskStatus.RUNNING,
+                message=f"已识别并保存 {completed}/{total} 张采样画面",
+                progress=ratio,
+                completed_units=completed,
+                total_units=total,
+            )
 
         return await asyncio.to_thread(run_ocr, frames, ocr_cache, report_ocr_progress)
 
@@ -1393,6 +1561,7 @@ class LocalProcessingManager:
         visual_cache: Path | None,
         video: Any,
         run: ProcessingRun,
+        skill_context: str = "",
     ) -> list[dict[str, Any]]:
         """视觉语义分支：分批调用 VLM，并在每批后保存断点。"""
         if self._vlm is None or visual_cache is None:
@@ -1410,7 +1579,14 @@ class LocalProcessingManager:
                 batch = selected_frames[offset : offset + 4]
                 try:
                     visual_items.extend(
-                        await self._vlm.analyze_frames(batch, video_id=str(video.id))
+                        await self._vlm.analyze_frames(
+                            batch,
+                            video_id=str(video.id),
+                            skill_context=skill_context or None,
+                            trace_id=str(run.trace_id),
+                            task_id=str(run.id),
+                            agent_id="vlm_understanding_agent",
+                        )
                     )
                 except Exception as exc:
                     video.metadata["vlm_batch_error"] = type(exc).__name__
@@ -1421,6 +1597,16 @@ class LocalProcessingManager:
                 run.message = (
                     f"并行感知：VLM {min(offset + len(batch), len(selected_frames))}/"
                     f"{len(selected_frames)}，结果已保存"
+                )
+                completed = min(offset + len(batch), len(selected_frames))
+                self._set_agent_task(
+                    run,
+                    "vlm_understanding_agent",
+                    status=AgentTaskStatus.RUNNING,
+                    message=f"已理解并保存 {completed}/{len(selected_frames)} 张代表画面",
+                    progress=completed / max(1, len(selected_frames)),
+                    completed_units=completed,
+                    total_units=len(selected_frames),
                 )
                 await asyncio.to_thread(
                     visual_cache.write_text,
@@ -1448,7 +1634,8 @@ class LocalProcessingManager:
             video = await self._store.get(run.video_id)
             if video is None:
                 raise FileNotFoundError("视频记录不存在")
-            skill_context = ""
+            vision_skill_context = ""
+            reasoning_skill_context = ""
             skill_binding = await self._store.get_skill_binding(video.id)
             if skill_binding is not None:
                 skill = await self._store.get_skill(skill_binding.skill_id)
@@ -1457,7 +1644,10 @@ class LocalProcessingManager:
                         skill.id, skill.active_version
                     )
                     if skill_version is not None and skill_version.status.value == "published":
-                        skill_context = skill_version.content.runtime_instructions()
+                        vision_skill_context = skill_version.content.vision_instructions()
+                        reasoning_skill_context = skill_version.content.text_instructions(
+                            "timeline"
+                        )
                         video.metadata["active_skill"] = {
                             "id": str(skill.id),
                             "name": skill.display_name,
@@ -1600,6 +1790,7 @@ class LocalProcessingManager:
                         visual_cache=visual_cache,
                         video=video,
                         run=run,
+                        skill_context=vision_skill_context,
                     ),
                     depends_on=["visual_sampling_agent"],
                     parallel_group="visual_perception",
@@ -1839,14 +2030,17 @@ class LocalProcessingManager:
                             + (
                                 "\n以下是用户审核发布的领域 Skill，只能补充分析维度；"
                                 "与直接视频证据冲突时以证据为准：\n"
-                                f"{skill_context}"
-                                if skill_context
+                                f"{reasoning_skill_context}"
+                                if reasoning_skill_context
                                 else ""
                             )
                         ),
                         user=compact[:100_000],
                         purpose="video_timeline_summary",
                         video_id=str(video.id),
+                        trace_id=str(run.trace_id),
+                        task_id=str(run.id),
+                        agent_id="timeline_curator_agent",
                         max_tokens=12_000,
                         thinking=False,
                     )
@@ -2250,14 +2444,17 @@ class LocalProcessingManager:
         await self._store.update(video)
 
         await self._update(run, "downloading", "下载并合并网页视频", 0.03, "正在获取视频与音频流")
+        library_directory = video_library_relative_directory(video, media_id=metadata.media_id)
+        video.metadata["library_directory"] = library_directory.as_posix()
+        await self._store.update(video)
         download_task = asyncio.create_task(
             self._web_downloader.download(
                 url=str(source.original_url),
-                idempotency_key=str(video.id),
+                idempotency_key=library_directory.as_posix(),
                 rights_confirmed=source.rights_confirmed,
             )
         )
-        job_dir = self._library_dir / str(video.id)
+        job_dir = self._library_dir / library_directory
         while not download_task.done():
             downloaded = await asyncio.to_thread(_directory_size, job_dir)
             estimated = metadata.estimated_size_bytes

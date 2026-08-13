@@ -7,6 +7,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+MAX_LOG_BYTES = 2 * 1024 * 1024
+
+
+def rotate_log(path: Path) -> None:
+    """启动前限制开发日志体积，避免 MCP 健康检查长期堆积数十万行。"""
+
+    if not path.exists() or path.stat().st_size <= MAX_LOG_BYTES:
+        return
+    backup = path.with_suffix(path.suffix + ".1")
+    backup.unlink(missing_ok=True)
+    path.replace(backup)
+
 
 def port_is_open(host: str = "127.0.0.1", port: int = 8090) -> bool:
     try:
@@ -24,14 +36,18 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     log_directory = project_root / "var" / "logs" / "search-mcp"
     log_directory.mkdir(parents=True, exist_ok=True)
+    output_path = log_directory / "server.out.log"
+    error_path = log_directory / "server.err.log"
+    rotate_log(output_path)
+    rotate_log(error_path)
     creation_flags = (
         subprocess.CREATE_NEW_PROCESS_GROUP
         | subprocess.DETACHED_PROCESS
         | subprocess.CREATE_NO_WINDOW
     )
     with (
-        (log_directory / "server.out.log").open("ab", buffering=0) as output,
-        (log_directory / "server.err.log").open("ab", buffering=0) as error,
+        output_path.open("ab", buffering=0) as output,
+        error_path.open("ab", buffering=0) as error,
     ):
         process = subprocess.Popen(
             [sys.executable, "-m", "lets_go_video_agent.mcp.search_server"],

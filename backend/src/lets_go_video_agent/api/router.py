@@ -15,8 +15,12 @@ from lets_go_video_agent import __version__
 from lets_go_video_agent.agents.harness.models import AgentRun
 from lets_go_video_agent.api.dependencies import get_container
 from lets_go_video_agent.api.schemas import (
+    AddSkillProjectUrlsRequest,
     AskQuestionRequest,
+    AttachProjectSkillRequest,
     BindSkillRequest,
+    CreateSkillProjectRequest,
+    DeleteSkillsRequest,
     GenerateSkillRequest,
     HarnessPolicyResponse,
     HealthResponse,
@@ -24,10 +28,12 @@ from lets_go_video_agent.api.schemas import (
     ModelRouteResponse,
     NarrativeContextResponse,
     RefineSkillRequest,
+    RegenerateSkillRequest,
     RollbackSkillRequest,
     RuntimeComponentResponse,
     SemanticEventsResponse,
     SkillListResponse,
+    SkillProjectListResponse,
     SystemObservabilityResponse,
     TimelineResponse,
     TraceEventsResponse,
@@ -38,7 +44,7 @@ from lets_go_video_agent.api.schemas import (
 from lets_go_video_agent.bootstrap import Container
 from lets_go_video_agent.domain.processing import ProcessingRun
 from lets_go_video_agent.domain.qa import Answer
-from lets_go_video_agent.domain.skill import SkillDetail
+from lets_go_video_agent.domain.skill import SkillDetail, SkillProjectWorkspace
 from lets_go_video_agent.domain.video import Video
 from lets_go_video_agent.media.video_library import resolve_video_source
 
@@ -111,6 +117,100 @@ async def list_skills(
     return SkillListResponse(items=await container.skills.list_skills())
 
 
+@router.get("/skill-projects", response_model=SkillProjectListResponse, tags=["skills"])
+async def list_skill_projects(
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectListResponse:
+    return SkillProjectListResponse(items=await container.skill_projects.list_projects())
+
+
+@router.post(
+    "/skill-projects",
+    response_model=SkillProjectWorkspace,
+    status_code=status.HTTP_201_CREATED,
+    tags=["skills"],
+)
+async def create_skill_project(
+    payload: CreateSkillProjectRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectWorkspace:
+    return await container.skill_projects.create(
+        name=payload.name,
+        goal=payload.goal,
+        description=payload.description,
+    )
+
+
+@router.get(
+    "/skill-projects/{project_id}",
+    response_model=SkillProjectWorkspace,
+    tags=["skills"],
+)
+async def get_skill_project(
+    project_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectWorkspace:
+    return await container.skill_projects.get(project_id)
+
+
+@router.delete(
+    "/skill-projects/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["skills"],
+)
+async def delete_skill_project(
+    project_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> Response:
+    await container.skill_projects.delete(project_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/skill-projects/{project_id}/videos",
+    response_model=SkillProjectWorkspace,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["skills"],
+)
+async def add_skill_project_videos(
+    project_id: UUID,
+    payload: AddSkillProjectUrlsRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectWorkspace:
+    return await container.skill_projects.add_urls(
+        project_id=project_id,
+        urls=payload.urls,
+        rights_confirmed=payload.rights_confirmed,
+    )
+
+
+@router.post(
+    "/skill-projects/{project_id}/items/{item_id}/retry",
+    response_model=SkillProjectWorkspace,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["skills"],
+)
+async def retry_skill_project_item(
+    project_id: UUID,
+    item_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectWorkspace:
+    return await container.skill_projects.retry(project_id, item_id)
+
+
+@router.post(
+    "/skill-projects/{project_id}/skill",
+    response_model=SkillProjectWorkspace,
+    tags=["skills"],
+)
+async def attach_project_skill(
+    project_id: UUID,
+    payload: AttachProjectSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillProjectWorkspace:
+    return await container.skill_projects.attach_skill(project_id, payload.skill_id)
+
+
 @router.post(
     "/skills/generate",
     response_model=SkillDetail,
@@ -128,12 +228,58 @@ async def generate_skill(
     )
 
 
+@router.post(
+    "/skills/batch-delete",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["skills"],
+)
+async def batch_delete_skills(
+    payload: DeleteSkillsRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> Response:
+    await container.skills.delete_many(payload.skill_ids)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/skills/{skill_id}/regenerate",
+    response_model=SkillDetail,
+    status_code=status.HTTP_201_CREATED,
+    tags=["skills"],
+)
+async def regenerate_skill(
+    skill_id: UUID,
+    payload: RegenerateSkillRequest,
+    container: Annotated[Container, Depends(get_container)],
+) -> SkillDetail:
+    """保留既有 Skill 与版本，使用最新样本创建一个新的待审核版本。"""
+
+    return await container.skills.regenerate(
+        skill_id=skill_id,
+        video_ids=payload.video_ids,
+        user_goal=payload.goal,
+    )
+
+
 @router.get("/skills/{skill_id}", response_model=SkillDetail, tags=["skills"])
 async def get_skill(
     skill_id: UUID,
     container: Annotated[Container, Depends(get_container)],
 ) -> SkillDetail:
     return await container.skills.get(skill_id)
+
+
+@router.delete(
+    "/skills/{skill_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["skills"],
+)
+async def delete_skill(
+    skill_id: UUID,
+    container: Annotated[Container, Depends(get_container)],
+) -> Response:
+    await container.skills.delete_many([skill_id])
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -285,11 +431,12 @@ async def get_cost_summary(
 async def get_usage_events(
     container: Annotated[Container, Depends(get_container)],
     video_id: UUID | None = None,
+    trace_id: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
 ) -> UsageEventsResponse:
     """返回统一用量事件，供成本中心按服务商和模型聚合展示。"""
 
-    all_items = list(await container.store.list_usage_events(video_id))
+    all_items = list(await container.store.list_usage_events(video_id, trace_id))
     items = all_items[-limit:]
     by_provider: dict[str, Decimal] = {}
     by_model: dict[str, Decimal] = {}

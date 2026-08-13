@@ -31,9 +31,11 @@ class CostLedger:
         path: Path,
         *,
         events: ObservabilityRepository | None = None,
+        hydrate_events: bool = False,
     ) -> None:
         self.path = path
         self._events = events
+        self._hydrate_events = hydrate_events
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, record: dict[str, Any]) -> None:
@@ -46,6 +48,25 @@ class CostLedger:
         if self._events is not None:
             await self._events.append_usage_event(usage)
 
+    async def hydrate(self) -> int:
+        """内存仓库启动时回放历史账本，让成本中心跨重启仍可按任务归因。"""
+
+        if not self._hydrate_events or self._events is None or not self.path.exists():
+            return 0
+        existing = await self._events.list_usage_events()
+        if existing:
+            return 0
+        hydrated = 0
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+                event = _usage_from_record(record)
+            except (json.JSONDecodeError, TypeError, ValueError, ArithmeticError):
+                continue
+            await self._events.append_usage_event(event)
+            hydrated += 1
+        return hydrated
+
     def summary(self) -> dict[str, Any]:
         records: list[dict[str, Any]] = []
         if self.path.exists():
@@ -54,7 +75,7 @@ class CostLedger:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
-        total = sum((Decimal(str(item.get("cost_cny", "0"))) for item in records), Decimal())
+        total = sum((_record_cost_cny(item) for item in records), Decimal())
         return {
             "currency": "CNY",
             "total_cost_cny": str(total.quantize(Decimal("0.000000001"))),
@@ -65,6 +86,8 @@ class CostLedger:
 
 class DeepSeekClient:
     """DeepSeek 的窄适配层，直接读取官方 usage 计算人民币实付估算。"""
+
+    provider = "deepseek"
 
     def __init__(
         self,
@@ -90,6 +113,9 @@ class DeepSeekClient:
         user: str,
         purpose: str,
         video_id: str | None = None,
+        trace_id: str | None = None,
+        task_id: str | None = None,
+        agent_id: str | None = None,
         max_tokens: int = 1800,
         thinking: bool = False,
         reasoning_effort: str = "high",
@@ -136,6 +162,9 @@ class DeepSeekClient:
                 "model": body.get("model", self.model),
                 "purpose": purpose,
                 "video_id": video_id,
+                "trace_id": trace_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
                 "cache_hit_input_tokens": hit,
                 "cache_miss_input_tokens": miss,
                 "output_tokens": output,
@@ -156,6 +185,9 @@ class DeepSeekClient:
                 cache_hit=hit > 0,
                 pricing_version="DeepSeek official V4 Flash pricing",
                 video_id=_optional_uuid(video_id),
+                trace_id=_optional_uuid(trace_id),
+                task_id=_optional_uuid(task_id),
+                agent_id=agent_id,
             ),
         )
         content = str(body["choices"][0]["message"].get("content") or "").strip()
@@ -179,8 +211,55 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     return parsed
 
 
-def _optional_uuid(value: str | None) -> UUID | None:
+def _usage_from_record(record: dict[str, Any]) -> UsageEvent:
+    input_tokens = int(
+        record.get("input_tokens")
+        or int(record.get("cache_hit_input_tokens") or 0)
+        + int(record.get("cache_miss_input_tokens") or 0)
+    )
+    output_tokens = int(record.get("output_tokens") or 0)
+    cost_cny = _record_cost_cny(record)
+    pricing_source = str(record.get("pricing_source") or "historical-ledger")
+    if (
+        str(record.get("provider") or "").lower() == "siliconflow"
+        and Decimal(str(record.get("cost_cny") or "0")) == 0
+        and cost_cny > 0
+    ):
+        pricing_source = "SiliconFlow official token pricing (historical recalculation)"
+    return UsageEvent(
+        provider=str(record.get("provider") or "unknown"),
+        model=str(record.get("model") or "unknown"),
+        purpose=str(record.get("purpose") or "unknown"),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        image_count=int(record.get("image_count") or 0),
+        original_cost=cost_cny,
+        cost_cny=cost_cny,
+        pricing_version=pricing_source,
+        trace_id=_optional_uuid(record.get("trace_id")),
+        task_id=_optional_uuid(record.get("task_id")),
+        video_id=_optional_uuid(record.get("video_id")),
+        agent_id=str(record.get("agent_id")) if record.get("agent_id") else None,
+    )
+
+
+def _record_cost_cny(record: dict[str, Any]) -> Decimal:
+    """读取账本费用；修复旧硅基流动记录因余额精度不足而被写成 0 的问题。"""
+
+    stored = Decimal(str(record.get("cost_cny") or "0"))
+    if stored > 0 or str(record.get("provider") or "").lower() != "siliconflow":
+        return stored
+    input_tokens = int(record.get("input_tokens") or 0)
+    output_tokens = int(record.get("output_tokens") or 0)
+    # Qwen/Qwen3-VL-32B-Instruct：输入 1 元/M tokens，输出 4 元/M tokens。
+    return (
+        Decimal(input_tokens) * Decimal("1")
+        + Decimal(output_tokens) * Decimal("4")
+    ) / Decimal("1000000")
+
+
+def _optional_uuid(value: object) -> UUID | None:
     try:
-        return UUID(value) if value else None
-    except ValueError:
+        return UUID(str(value)) if value else None
+    except (TypeError, ValueError):
         return None

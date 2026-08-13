@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from lets_go_video_agent.agents.catalog import agent_trace_attributes
 from lets_go_video_agent.agents.harness.models import (
     AgentRun,
     AgentStep,
@@ -135,6 +136,16 @@ class HarnessSession:
             return
         async with self._event_lock:
             self._trace_sequence += 1
+            event_agent_id = (
+                name
+                if name
+                in {
+                    "qa_investigator",
+                    "evidence_verifier",
+                    "web_research_agent",
+                }
+                else self.run.agent_name
+            )
             await self._events.append_trace_event(
                 TraceEvent(
                     trace_id=self.run.id,
@@ -144,8 +155,11 @@ class HarnessSession:
                     status=status,
                     summary=summary,
                     video_id=self.run.video_id,
-                    agent_id=self.run.agent_name,
-                    attributes=attributes or {},
+                    agent_id=event_agent_id,
+                    attributes={
+                        **agent_trace_attributes(event_agent_id),
+                        **(attributes or {}),
+                    },
                 )
             )
 

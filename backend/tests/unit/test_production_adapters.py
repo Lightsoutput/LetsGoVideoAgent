@@ -10,6 +10,8 @@ import pytest
 from pydantic import ValidationError
 
 from lets_go_video_agent.infrastructure.cache.redis import RedisCache
+from lets_go_video_agent.infrastructure.memory import InMemoryStore
+from lets_go_video_agent.infrastructure.models.deepseek_client import CostLedger
 from lets_go_video_agent.infrastructure.models.litellm_gateway import (
     ChatMessage,
     LiteLLMModelGateway,
@@ -115,6 +117,41 @@ async def test_ytdlp_download_uses_browser_compatible_single_video_format(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_ytdlp_accepts_safe_nested_library_directory(tmp_path: Path) -> None:
+    async def fake_runner(
+        args: Sequence[str],
+        *,
+        timeout_seconds: float,
+        max_output_bytes: int = 8 * 1024 * 1024,
+    ) -> ProcessResult:
+        del timeout_seconds, max_output_bytes
+        template = Path(args[args.index("-o") + 1])
+        media_path = template.parent / "BV1fixture.mp4"
+        media_path.write_bytes(b"fixture-media")
+        return ProcessResult(tuple(args), 0, f"{media_path}\n", "")
+
+    async def public_dns(_hostname: str, _port: int) -> Sequence[str]:
+        return ["8.8.8.8"]
+
+    adapter = YtDlpAdapter(
+        download_root=tmp_path,
+        remote_enabled=True,
+        max_download_bytes=1_024,
+        runner=fake_runner,
+        dns_resolver=public_dns,
+    )
+    result = await adapter.download(
+        url="https://www.bilibili.com/video/BV1fixture/",
+        idempotency_key="skill-projects/zc/BV1fixture_视频标题",
+        rights_confirmed=True,
+    )
+
+    assert result.path.parent.relative_to(tmp_path).as_posix() == (
+        "skill-projects/zc/BV1fixture_视频标题"
+    )
+
+
+@pytest.mark.asyncio
 async def test_s3_rejects_path_traversal_before_calling_client() -> None:
     store = S3ObjectStore(bucket="fixture", client=object())
 
@@ -194,3 +231,23 @@ def test_qdrant_vector_contract_rejects_non_finite_values() -> None:
 def test_temporal_worker_console_entrypoint_is_importable() -> None:
     assert callable(run_temporal_worker)
     assert VideoProcessingWorkflow.__name__ == "VideoProcessingWorkflow"
+
+
+@pytest.mark.asyncio
+async def test_cost_ledger_recalculates_historical_siliconflow_zero_cost(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "model-usage.jsonl"
+    ledger_path.write_text(
+        '{"provider":"siliconflow","model":"Qwen/Qwen3-VL-32B-Instruct",'
+        '"purpose":"video_visual_understanding","input_tokens":1000,'
+        '"output_tokens":200,"cost_cny":"0"}\n',
+        encoding="utf-8",
+    )
+    store = InMemoryStore()
+    ledger = CostLedger(ledger_path, events=store, hydrate_events=True)
+
+    assert await ledger.hydrate() == 1
+    events = await store.list_usage_events()
+    assert events[0].cost_cny == Decimal("0.0018")
+    assert "historical recalculation" in str(events[0].pricing_version)

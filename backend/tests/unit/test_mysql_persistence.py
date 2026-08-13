@@ -14,6 +14,8 @@ def test_mysql_schema_contains_p0_source_of_truth_tables() -> None:
         "questions",
         "semantic_events",
         "skill_bindings",
+        "skill_project_items",
+        "skill_projects",
         "skill_versions",
         "skills",
         "timeline_artifacts",

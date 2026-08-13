@@ -69,6 +69,817 @@
         }
       }
     },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List Skills",
+        "operationId": "list_skills_api_v1_skills_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skill-projects": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List Skill Projects",
+        "operationId": "list_skill_projects_api_v1_skill_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Create Skill Project",
+        "operationId": "create_skill_project_api_v1_skill_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectWorkspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skill-projects/{project_id}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get Skill Project",
+        "operationId": "get_skill_project_api_v1_skill_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectWorkspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Delete Skill Project",
+        "operationId": "delete_skill_project_api_v1_skill_projects__project_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skill-projects/{project_id}/videos": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Add Skill Project Videos",
+        "operationId": "add_skill_project_videos_api_v1_skill_projects__project_id__videos_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddSkillProjectUrlsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectWorkspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skill-projects/{project_id}/items/{item_id}/retry": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Retry Skill Project Item",
+        "operationId": "retry_skill_project_item_api_v1_skill_projects__project_id__items__item_id__retry_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectWorkspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skill-projects/{project_id}/skill": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Attach Project Skill",
+        "operationId": "attach_project_skill_api_v1_skill_projects__project_id__skill_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachProjectSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProjectWorkspace"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/generate": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Generate Skill",
+        "operationId": "generate_skill_api_v1_skills_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/batch-delete": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Batch Delete Skills",
+        "operationId": "batch_delete_skills_api_v1_skills_batch_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteSkillsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}/regenerate": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Regenerate Skill",
+        "description": "保留既有 Skill 与版本，使用最新样本创建一个新的待审核版本。",
+        "operationId": "regenerate_skill_api_v1_skills__skill_id__regenerate_post",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get Skill",
+        "operationId": "get_skill_api_v1_skills__skill_id__get",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Delete Skill",
+        "operationId": "delete_skill_api_v1_skills__skill_id__delete",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}/refine": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Refine Skill",
+        "operationId": "refine_skill_api_v1_skills__skill_id__refine_post",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefineSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}/versions/{version}/publish": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Publish Skill",
+        "operationId": "publish_skill_api_v1_skills__skill_id__versions__version__publish_post",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}/rollback": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Rollback Skill",
+        "operationId": "rollback_skill_api_v1_skills__skill_id__rollback_post",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}/bindings": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Bind Skill",
+        "operationId": "bind_skill_api_v1_skills__skill_id__bindings_post",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/videos/{video_id}/skill": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get Video Skill",
+        "operationId": "get_video_skill_api_v1_videos__video_id__skill_get",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Unbind Video Skill",
+        "operationId": "unbind_video_skill_api_v1_videos__video_id__skill_delete",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/videos/{video_id}": {
       "get": {
         "tags": [
@@ -194,6 +1005,215 @@
         }
       }
     },
+    "/api/v1/videos/{video_id}/processing": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Start Processing",
+        "operationId": "start_processing_api_v1_videos__video_id__processing_post",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Get Processing",
+        "operationId": "get_processing_api_v1_videos__video_id__processing_get",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/costs/summary": {
+      "get": {
+        "tags": [
+          "cost"
+        ],
+        "summary": "Get Cost Summary",
+        "operationId": "get_cost_summary_api_v1_costs_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Cost Summary Api V1 Costs Summary Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/observability/usage": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "Get Usage Events",
+        "description": "返回统一用量事件，供成本中心按服务商和模型聚合展示。",
+        "operationId": "get_usage_events_api_v1_observability_usage_get",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Id"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trace Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/observability/system": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "Get Observability System",
+        "description": "公开安全的运行配置，不返回 API Key、Prompt 或代理凭据。",
+        "operationId": "get_observability_system_api_v1_observability_system_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemObservabilityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/videos/{video_id}/timeline": {
       "get": {
         "tags": [
@@ -220,6 +1240,92 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/videos/{video_id}/semantic-events": {
+      "get": {
+        "tags": [
+          "understanding"
+        ],
+        "summary": "Get Semantic Events",
+        "operationId": "get_semantic_events_api_v1_videos__video_id__semantic_events_get",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/videos/{video_id}/narrative-context": {
+      "get": {
+        "tags": [
+          "understanding"
+        ],
+        "summary": "Get Narrative Context",
+        "operationId": "get_narrative_context_api_v1_videos__video_id__narrative_context_get",
+        "parameters": [
+          {
+            "name": "video_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Video Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NarrativeContextResponse"
                 }
               }
             }
@@ -332,10 +1438,121 @@
           }
         }
       }
+    },
+    "/api/v1/agent-runs/{run_id}/trace": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "Get Agent Trace",
+        "operationId": "get_agent_trace_api_v1_agent_runs__run_id__trace_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/traces/{trace_id}": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "Get Trace",
+        "description": "读取问答或视频处理 Trace，不要求它必须对应 AgentRun。",
+        "operationId": "get_trace_api_v1_traces__trace_id__get",
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AddSkillProjectUrlsRequest": {
+        "properties": {
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Urls"
+          },
+          "rights_confirmed": {
+            "type": "boolean",
+            "title": "Rights Confirmed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "urls"
+        ],
+        "title": "AddSkillProjectUrlsRequest"
+      },
       "AgentRun": {
         "properties": {
           "id": {
@@ -465,6 +1682,17 @@
         ],
         "title": "AgentStep"
       },
+      "AgentTaskStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "skipped"
+        ],
+        "title": "AgentTaskStatus"
+      },
       "Answer": {
         "properties": {
           "id": {
@@ -512,6 +1740,18 @@
             "type": "array",
             "title": "Limitations"
           },
+          "web_search_performed": {
+            "type": "boolean",
+            "title": "Web Search Performed",
+            "default": false
+          },
+          "web_sources": {
+            "items": {
+              "$ref": "#/components/schemas/WebReference"
+            },
+            "type": "array",
+            "title": "Web Sources"
+          },
           "trace_id": {
             "type": "string",
             "format": "uuid",
@@ -519,6 +1759,42 @@
           },
           "usage": {
             "$ref": "#/components/schemas/ModelUsage"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "skill_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Version"
+          },
+          "skill_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Name"
           },
           "created_at": {
             "type": "string",
@@ -590,6 +1866,23 @@
               }
             ],
             "title": "Conversation Id"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "use_web_search": {
+            "type": "boolean",
+            "title": "Use Web Search",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -598,6 +1891,41 @@
           "query"
         ],
         "title": "AskQuestionRequest"
+      },
+      "AttachProjectSkillRequest": {
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Skill Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "skill_id"
+        ],
+        "title": "AttachProjectSkillRequest"
+      },
+      "BindSkillRequest": {
+        "properties": {
+          "video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Video Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_ids"
+        ],
+        "title": "BindSkillRequest"
       },
       "Body_upload_video_api_v1_videos_uploads_post": {
         "properties": {
@@ -613,6 +1941,55 @@
           "file"
         ],
         "title": "Body_upload_video_api_v1_videos_uploads_post"
+      },
+      "CreateSkillProjectRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 4,
+            "title": "Goal"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 600,
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "goal"
+        ],
+        "title": "CreateSkillProjectRequest"
+      },
+      "DeleteSkillsRequest": {
+        "properties": {
+          "skill_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Skill Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "skill_ids"
+        ],
+        "title": "DeleteSkillsRequest"
       },
       "Evidence": {
         "properties": {
@@ -799,6 +2176,45 @@
         ],
         "title": "FrameTarget"
       },
+      "GenerateSkillRequest": {
+        "properties": {
+          "video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Video Ids"
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 4,
+            "title": "Goal"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_ids",
+          "goal"
+        ],
+        "title": "GenerateSkillRequest"
+      },
       "GlobalTarget": {
         "properties": {
           "kind": {
@@ -825,6 +2241,65 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HarnessPolicyResponse": {
+        "properties": {
+          "max_steps": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Steps"
+          },
+          "max_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Model Calls"
+          },
+          "max_tool_calls": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Tool Calls"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 100.0,
+            "title": "Max Tokens"
+          },
+          "max_cost_usd": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Max Cost Usd"
+          },
+          "deadline_seconds": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Deadline Seconds"
+          },
+          "max_repeated_tool_call": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Repeated Tool Call"
+          },
+          "registered_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Registered Tools"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "max_steps",
+          "max_model_calls",
+          "max_tool_calls",
+          "max_tokens",
+          "max_cost_usd",
+          "deadline_seconds",
+          "max_repeated_tool_call",
+          "registered_tools"
+        ],
+        "title": "HarnessPolicyResponse"
+      },
       "HealthResponse": {
         "properties": {
           "status": {
@@ -848,6 +2323,74 @@
           "repository"
         ],
         "title": "HealthResponse"
+      },
+      "McpStatusResponse": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "status",
+          "endpoint",
+          "tools"
+        ],
+        "title": "McpStatusResponse"
+      },
+      "ModelRouteResponse": {
+        "properties": {
+          "capability": {
+            "type": "string",
+            "title": "Capability"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "capability",
+          "provider",
+          "model",
+          "configured"
+        ],
+        "title": "ModelRouteResponse"
       },
       "ModelUsage": {
         "properties": {
@@ -921,6 +2464,148 @@
         ],
         "title": "MomentTarget"
       },
+      "NarrativeContext": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "video_format": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Video Format"
+          },
+          "purpose": {
+            "type": "string",
+            "maxLength": 600,
+            "minLength": 1,
+            "title": "Purpose"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audience"
+          },
+          "participants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Participants"
+          },
+          "settings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Settings"
+          },
+          "themes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Themes"
+          },
+          "event_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Event Ids"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Artifact Ids"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Evidence Ids"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "default": 0.5
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version",
+            "default": 1
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id",
+          "video_format",
+          "purpose",
+          "summary",
+          "provenance"
+        ],
+        "title": "NarrativeContext",
+        "description": "对整段视频的叙事理解，而不是字幕或 OCR 的简单摘要。"
+      },
+      "NarrativeContextResponse": {
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NarrativeContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id",
+          "context"
+        ],
+        "title": "NarrativeContextResponse"
+      },
       "ObservationType": {
         "type": "string",
         "enum": [
@@ -929,6 +2614,275 @@
           "user_annotation"
         ],
         "title": "ObservationType"
+      },
+      "ProcessingAgentTask": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_number": {
+            "type": "string",
+            "title": "Agent Number"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentTaskStatus",
+            "default": "pending"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase",
+            "default": "等待"
+          },
+          "task": {
+            "type": "string",
+            "title": "Task",
+            "default": "等待上游任务"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "尚未开始"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0
+          },
+          "completed_units": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completed Units",
+            "default": 0
+          },
+          "total_units": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Units"
+          },
+          "model_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Provider"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "parallel_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parallel Group"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agent_id",
+          "agent_number",
+          "display_name",
+          "role"
+        ],
+        "title": "ProcessingAgentTask",
+        "description": "一个 Agent 在单条视频上的公开工作快照，不包含隐藏思维链。"
+      },
+      "ProcessingRun": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "trace_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Trace Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProcessingStatus",
+            "default": "queued"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "default": "queued"
+          },
+          "stage_label": {
+            "type": "string",
+            "title": "Stage Label",
+            "default": "等待处理"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Elapsed Seconds",
+            "default": 0
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "任务已进入队列"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempt Count",
+            "default": 0
+          },
+          "agent_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessingAgentTask"
+            },
+            "type": "array",
+            "title": "Agent Tasks"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id"
+        ],
+        "title": "ProcessingRun",
+        "description": "可轮询的媒体处理状态；前端不再只能看到一句“请等待”。"
+      },
+      "ProcessingStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "title": "ProcessingStatus"
       },
       "Provenance": {
         "properties": {
@@ -1007,6 +2961,82 @@
         ],
         "title": "RangeTarget"
       },
+      "RefineSkillRequest": {
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 2,
+            "title": "Instruction"
+          },
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instruction"
+        ],
+        "title": "RefineSkillRequest"
+      },
+      "RegenerateSkillRequest": {
+        "properties": {
+          "video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Video Ids"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_ids"
+        ],
+        "title": "RegenerateSkillRequest",
+        "description": "基于项目最新样本为已有 Skill 生成新的草案版本。"
+      },
+      "RollbackSkillRequest": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "RollbackSkillRequest"
+      },
       "RunBudget": {
         "properties": {
           "max_steps": {
@@ -1070,6 +3100,1689 @@
         ],
         "title": "RunStatus"
       },
+      "RuntimeComponentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depends On"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "status",
+          "summary"
+        ],
+        "title": "RuntimeComponentResponse",
+        "description": "状态机可视化所需的运行组件快照，不包含任何凭据。"
+      },
+      "SemanticEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "time_range": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "event_type": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Event Type"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "participants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Participants"
+          },
+          "entities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Entities"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actions"
+          },
+          "causes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Causes"
+          },
+          "effects": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Effects"
+          },
+          "artifact_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Artifact Ids"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Evidence Ids"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "default": 0.5
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id",
+          "time_range",
+          "event_type",
+          "title",
+          "summary",
+          "provenance"
+        ],
+        "title": "SemanticEvent",
+        "description": "经过多模态互证后形成的视频事件。\n\nTimelineArtifact 保存各条原始轨道；SemanticEvent 则回答“这一段发生了什么”。\n两者分开后，章节和问答可以使用高层语义，同时仍能回到原始证据审计。"
+      },
+      "SemanticEventsResponse": {
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id",
+          "items"
+        ],
+        "title": "SemanticEventsResponse"
+      },
+      "Skill": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "title": "Slug"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 600,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "author": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Author",
+            "default": "local-user"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SkillStatus",
+            "default": "draft"
+          },
+          "active_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slug",
+          "display_name",
+          "description"
+        ],
+        "title": "Skill"
+      },
+      "SkillCategoryEssence": {
+        "properties": {
+          "extraction_status": {
+            "type": "string",
+            "pattern": "^(sample-derived|insufficient)$",
+            "title": "Extraction Status",
+            "default": "insufficient"
+          },
+          "one_sentence_essence": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "One Sentence Essence",
+            "default": ""
+          },
+          "content_core": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Content Core"
+          },
+          "visual_signature": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Visual Signature"
+          },
+          "narration_copywriting": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Narration Copywriting"
+          },
+          "storytelling_engine": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Storytelling Engine"
+          },
+          "pacing_editing": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Pacing Editing"
+          },
+          "recurring_devices": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Recurring Devices"
+          },
+          "viewer_value": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Viewer Value"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/SkillEssenceEvidence"
+            },
+            "type": "array",
+            "maxItems": 24,
+            "title": "Evidence"
+          },
+          "confidence_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Confidence Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillCategoryEssence",
+        "description": "真正从样本中提炼出的类别精髓，与通用运行规则严格分层。"
+      },
+      "SkillCategoryProfile": {
+        "properties": {
+          "category_name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Category Name",
+            "default": "通用视频"
+          },
+          "style_summary": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Style Summary",
+            "default": ""
+          },
+          "common_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Common Formats"
+          },
+          "typical_content": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Typical Content"
+          },
+          "narrative_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Narrative Patterns"
+          },
+          "visual_language": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Visual Language"
+          },
+          "audience_expectations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Audience Expectations"
+          },
+          "stable_signals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Stable Signals"
+          },
+          "variable_signals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Variable Signals"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillCategoryProfile",
+        "description": "从多样本中提炼的类别画像，只记录稳定共性，不记忆单条视频答案。"
+      },
+      "SkillContent": {
+        "properties": {
+          "applicable_video_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Applicable Video Types"
+          },
+          "category_essence": {
+            "$ref": "#/components/schemas/SkillCategoryEssence"
+          },
+          "category_profile": {
+            "$ref": "#/components/schemas/SkillCategoryProfile"
+          },
+          "runtime_targets": {
+            "items": {
+              "$ref": "#/components/schemas/SkillRuntimeTarget"
+            },
+            "type": "array",
+            "maxItems": 6,
+            "title": "Runtime Targets"
+          },
+          "objectives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Objectives"
+          },
+          "terminology": {
+            "items": {
+              "$ref": "#/components/schemas/SkillTerm"
+            },
+            "type": "array",
+            "maxItems": 80,
+            "title": "Terminology"
+          },
+          "segmentation_hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Segmentation Hints"
+          },
+          "visual_focus": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Visual Focus"
+          },
+          "qa_strategy": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Qa Strategy"
+          },
+          "output_requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Output Requirements"
+          },
+          "allowed_agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Allowed Agents"
+          },
+          "allowed_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Allowed Tools"
+          },
+          "allowed_mcps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Allowed Mcps"
+          },
+          "model_guidance": {
+            "type": "string",
+            "maxLength": 1500,
+            "title": "Model Guidance",
+            "default": "优先使用经济模型，证据冲突时再升级模型。"
+          },
+          "positive_examples": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Positive Examples"
+          },
+          "negative_examples": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Negative Examples"
+          },
+          "boundary_conditions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Boundary Conditions"
+          },
+          "known_limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Known Limitations"
+          },
+          "default_questions": {
+            "items": {
+              "$ref": "#/components/schemas/SkillDefaultQuestion"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Default Questions"
+          },
+          "output_templates": {
+            "items": {
+              "$ref": "#/components/schemas/SkillOutputTemplate"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Output Templates"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillContent",
+        "description": "可注入 Agent 的领域能力契约；所有权限字段都只能缩小系统权限。"
+      },
+      "SkillDefaultQuestion": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Question"
+          },
+          "purpose": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Purpose"
+          },
+          "answer_structure": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Answer Structure"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question",
+          "purpose"
+        ],
+        "title": "SkillDefaultQuestion"
+      },
+      "SkillDetail": {
+        "properties": {
+          "skill": {
+            "$ref": "#/components/schemas/Skill"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/SkillVersion"
+            },
+            "type": "array",
+            "title": "Versions"
+          },
+          "bound_video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Bound Video Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "skill",
+          "versions"
+        ],
+        "title": "SkillDetail"
+      },
+      "SkillEssenceEvidence": {
+        "properties": {
+          "insight": {
+            "type": "string",
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Insight"
+          },
+          "supporting_video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Supporting Video Ids"
+          },
+          "observations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Observations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "insight"
+        ],
+        "title": "SkillEssenceEvidence",
+        "description": "一条类别结论及其样本依据，避免把通用模板伪装成样本洞察。"
+      },
+      "SkillListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Skill"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SkillListResponse"
+      },
+      "SkillOutputTemplate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Name"
+          },
+          "use_when": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Use When"
+          },
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Fields"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "use_when"
+        ],
+        "title": "SkillOutputTemplate"
+      },
+      "SkillProject": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 600,
+            "title": "Description",
+            "default": ""
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 4,
+            "title": "Goal"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SkillProjectStatus",
+            "default": "active"
+          },
+          "skill_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "goal"
+        ],
+        "title": "SkillProject",
+        "description": "围绕一类视频长期积累样本与 Skill 的工作空间。"
+      },
+      "SkillProjectAgent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "avatar": {
+            "type": "string",
+            "title": "Avatar"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "idle"
+          },
+          "video_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Id"
+          },
+          "video_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Title"
+          },
+          "task": {
+            "type": "string",
+            "title": "Task",
+            "default": "等待新任务"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "active_tasks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Active Tasks",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "等待新任务"
+          },
+          "completed_units": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completed Units",
+            "default": 0
+          },
+          "total_units": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Units"
+          },
+          "model_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Provider"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectAgentAssignment"
+            },
+            "type": "array",
+            "title": "Assignments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "role",
+          "avatar"
+        ],
+        "title": "SkillProjectAgent",
+        "description": "面向用户的 Agent 工位快照，不暴露模型隐藏推理。"
+      },
+      "SkillProjectAgentAssignment": {
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Video Id"
+          },
+          "video_title": {
+            "type": "string",
+            "title": "Video Title"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "task": {
+            "type": "string",
+            "title": "Task"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0
+          },
+          "completed_units": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completed Units",
+            "default": 0
+          },
+          "total_units": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Units"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "video_id",
+          "video_title",
+          "task",
+          "message"
+        ],
+        "title": "SkillProjectAgentAssignment",
+        "description": "一个 Agent 当前在某条样本视频上的具体分工。"
+      },
+      "SkillProjectChapterPreview": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Summary",
+            "default": ""
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "End Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "SkillProjectChapterPreview"
+      },
+      "SkillProjectCostSummary": {
+        "properties": {
+          "total_cost_cny": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Cost Cny",
+            "default": "0"
+          },
+          "call_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Call Count",
+            "default": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Image Count",
+            "default": 0
+          },
+          "by_model": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "By Model"
+          },
+          "by_agent": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "By Agent"
+          },
+          "by_video": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "By Video"
+          },
+          "by_purpose": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "By Purpose"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillProjectCostSummary",
+        "description": "按当前 Skill 项目归属的模型/API 成本，不与其他视频任务混算。"
+      },
+      "SkillProjectFramePreview": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Description",
+            "default": ""
+          },
+          "timestamp_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timestamp Ms"
+          },
+          "snapshot_filename": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Filename"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "timestamp_ms"
+        ],
+        "title": "SkillProjectFramePreview"
+      },
+      "SkillProjectItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "source_url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 8,
+            "title": "Source Url"
+          },
+          "video_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Title",
+            "default": "等待读取视频信息"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SkillProjectItemStatus",
+            "default": "queued"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "default": "queued"
+          },
+          "stage_label": {
+            "type": "string",
+            "title": "Stage Label",
+            "default": "等待分配"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0
+          },
+          "current_agent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Agent"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Message",
+            "default": "已加入项目队列"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "agent_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessingAgentTask"
+            },
+            "type": "array",
+            "title": "Agent Tasks"
+          },
+          "insight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillProjectVideoInsight"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "source_url"
+        ],
+        "title": "SkillProjectItem",
+        "description": "项目中的单条视频任务；保留来源 URL，支持失败重试和服务重启恢复。"
+      },
+      "SkillProjectItemStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "importing",
+          "processing",
+          "ready",
+          "failed"
+        ],
+        "title": "SkillProjectItemStatus"
+      },
+      "SkillProjectListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProject"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SkillProjectListResponse"
+      },
+      "SkillProjectModelRoute": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_display_name": {
+            "type": "string",
+            "title": "Agent Display Name"
+          },
+          "stages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stages"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target",
+          "provider",
+          "model",
+          "agent_id",
+          "agent_display_name"
+        ],
+        "title": "SkillProjectModelRoute"
+      },
+      "SkillProjectStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "processing",
+          "ready",
+          "attention"
+        ],
+        "title": "SkillProjectStatus"
+      },
+      "SkillProjectVideoInsight": {
+        "properties": {
+          "video_format": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Video Format",
+            "default": "通用视频"
+          },
+          "purpose": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Purpose",
+            "default": ""
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 3000,
+            "title": "Summary",
+            "default": ""
+          },
+          "themes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Themes"
+          },
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectChapterPreview"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Chapters"
+          },
+          "representative_frames": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectFramePreview"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Representative Frames"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillProjectVideoInsight",
+        "description": "流水线卡片使用的视频理解结果摘要，不再只展示处理状态。"
+      },
+      "SkillProjectWorkspace": {
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/SkillProject"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectAgent"
+            },
+            "type": "array",
+            "title": "Agents"
+          },
+          "recent_logs": {
+            "items": {
+              "$ref": "#/components/schemas/TraceEvent"
+            },
+            "type": "array",
+            "title": "Recent Logs"
+          },
+          "cost_summary": {
+            "$ref": "#/components/schemas/SkillProjectCostSummary"
+          },
+          "model_routes": {
+            "items": {
+              "$ref": "#/components/schemas/SkillProjectModelRoute"
+            },
+            "type": "array",
+            "title": "Model Routes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project"
+        ],
+        "title": "SkillProjectWorkspace"
+      },
+      "SkillRuntimeTarget": {
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[a-z0-9_]+$",
+            "title": "Target Id"
+          },
+          "target_name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Target Name"
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Model"
+          },
+          "stages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Stages"
+          },
+          "instructions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Instructions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target_id",
+          "target_name",
+          "provider",
+          "model"
+        ],
+        "title": "SkillRuntimeTarget",
+        "description": "明确 Skill 的某组规则装给哪类模型、用在哪些阶段。"
+      },
+      "SkillStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "published",
+          "retired"
+        ],
+        "title": "SkillStatus"
+      },
+      "SkillTerm": {
+        "properties": {
+          "term": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Term"
+          },
+          "meaning": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Meaning"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Aliases"
+          },
+          "verification": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Verification",
+            "default": "结合字幕、OCR、上下文与搜索交叉核验"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "term",
+          "meaning"
+        ],
+        "title": "SkillTerm",
+        "description": "领域术语不是关键词替换表，而是带核验策略的概念说明。"
+      },
+      "SkillValidationReport": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "SkillValidationReport"
+      },
+      "SkillVersion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "skill_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Skill Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SkillStatus",
+            "default": "draft"
+          },
+          "content": {
+            "$ref": "#/components/schemas/SkillContent"
+          },
+          "sample_video_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Sample Video Ids"
+          },
+          "user_goal": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "User Goal"
+          },
+          "generation_basis": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Generation Basis"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/SkillValidationReport"
+          },
+          "trace_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Trace Id"
+          },
+          "parent_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Version"
+          },
+          "change_summary": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Change Summary",
+            "default": "初始草案"
+          },
+          "artifact_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Path"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "skill_id",
+          "version",
+          "content",
+          "user_goal",
+          "validation"
+        ],
+        "title": "SkillVersion"
+      },
       "SpatialRegion": {
         "properties": {
           "x": {
@@ -1127,6 +4840,49 @@
           "fixture_name"
         ],
         "title": "SyntheticSource"
+      },
+      "SystemObservabilityResponse": {
+        "properties": {
+          "harness": {
+            "$ref": "#/components/schemas/HarnessPolicyResponse"
+          },
+          "mcp": {
+            "$ref": "#/components/schemas/McpStatusResponse"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelRouteResponse"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "repository": {
+            "type": "string",
+            "title": "Repository"
+          },
+          "workflow": {
+            "type": "string",
+            "title": "Workflow"
+          },
+          "runtime_components": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeComponentResponse"
+            },
+            "type": "array",
+            "title": "Runtime Components"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "harness",
+          "mcp",
+          "models",
+          "repository",
+          "workflow",
+          "runtime_components"
+        ],
+        "title": "SystemObservabilityResponse"
       },
       "TimeRange": {
         "properties": {
@@ -1287,6 +5043,166 @@
         ],
         "title": "TimelineResponse"
       },
+      "TraceEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "trace_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Trace Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Sequence"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/TraceEventType"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Summary",
+            "default": ""
+          },
+          "video_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "parent_event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Event Id"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Attributes"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "sequence",
+          "event_type",
+          "name"
+        ],
+        "title": "TraceEvent",
+        "description": "可持久化、可展示的公开执行事件，不保存隐藏思维链。"
+      },
+      "TraceEventType": {
+        "type": "string",
+        "enum": [
+          "agent.started",
+          "agent.completed",
+          "agent.failed",
+          "model.requested",
+          "model.completed",
+          "tool.called",
+          "tool.returned",
+          "mcp.called",
+          "mcp.returned",
+          "skill.loaded",
+          "skill.validated",
+          "budget.updated",
+          "human.approved",
+          "human.rejected",
+          "workflow.started",
+          "workflow.completed",
+          "workflow.failed"
+        ],
+        "title": "TraceEventType"
+      },
+      "TraceEventsResponse": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Trace Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TraceEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "items"
+        ],
+        "title": "TraceEventsResponse"
+      },
       "UploadSource": {
         "properties": {
           "kind": {
@@ -1328,6 +5244,225 @@
           "size_bytes"
         ],
         "title": "UploadSource"
+      },
+      "UsageEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Model"
+          },
+          "purpose": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Purpose"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Image Count",
+            "default": 0
+          },
+          "request_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Request Count",
+            "default": 1
+          },
+          "original_currency": {
+            "type": "string",
+            "maxLength": 3,
+            "minLength": 3,
+            "title": "Original Currency",
+            "default": "CNY"
+          },
+          "original_cost": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Original Cost",
+            "default": "0"
+          },
+          "cost_cny": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Cny",
+            "default": "0"
+          },
+          "cache_hit": {
+            "type": "boolean",
+            "title": "Cache Hit",
+            "default": false
+          },
+          "retry": {
+            "type": "boolean",
+            "title": "Retry",
+            "default": false
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Status",
+            "default": "completed"
+          },
+          "pricing_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Version"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "video_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Id"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "purpose"
+        ],
+        "title": "UsageEvent",
+        "description": "所有模型和外部 API 共用的计费事件，统一以人民币汇总。"
+      },
+      "UsageEventsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "call_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Call Count"
+          },
+          "total_input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Input Tokens"
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Output Tokens"
+          },
+          "total_cost_cny": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Cost Cny"
+          },
+          "cost_by_provider": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "Cost By Provider"
+          },
+          "cost_by_model": {
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+            },
+            "type": "object",
+            "title": "Cost By Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "call_count",
+          "total_input_tokens",
+          "total_output_tokens",
+          "total_cost_cny",
+          "cost_by_provider",
+          "cost_by_model"
+        ],
+        "title": "UsageEventsResponse"
       },
       "ValidationError": {
         "properties": {
@@ -1587,6 +5722,35 @@
           "url"
         ],
         "title": "WebImportRequest"
+      },
+      "WebReference": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 8,
+            "title": "Url"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Content",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "WebReference"
       },
       "WebSource": {
         "properties": {

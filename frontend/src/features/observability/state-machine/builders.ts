@@ -27,15 +27,15 @@ interface EdgeTemplate {
 
 const PROCESSING_NODES: NodeTemplate[] = [
   { id: "video_processing_graph", label: "视频处理工作流", category: "workflow", x: 0, y: 210, summary: "接收媒体任务并驱动完整处理图" },
-  { id: "ingestion_agent", label: "媒体接入 Agent", category: "agent", x: 270, y: 210, summary: "下载、探测并登记媒体元数据" },
+  { id: "ingestion_agent", label: "A01 小载 · 媒体接入", category: "agent", x: 270, y: 210, summary: "下载、探测并登记媒体元数据" },
   { id: "perception_coordinator", label: "感知协调器", category: "gate", x: 540, y: 210, summary: "分叉音频与视觉感知任务" },
-  { id: "audio_perception_agent", label: "音频感知 Agent", category: "agent", x: 820, y: 40, summary: "语音转写与时间戳对齐", badge: "并行组 A" },
-  { id: "visual_sampling_agent", label: "视觉采样 Agent", category: "agent", x: 820, y: 390, summary: "抽取可访问的候选画面", badge: "并行组 A" },
-  { id: "ocr_perception_agent", label: "OCR 感知 Agent", category: "agent", x: 1100, y: 300, summary: "识别画面中的文字证据", badge: "并行组 B" },
-  { id: "vlm_understanding_agent", label: "VLM 理解 Agent", category: "agent", x: 1100, y: 500, summary: "理解人物、动作、界面与场景含义", badge: "并行组 B" },
+  { id: "audio_perception_agent", label: "A02 小听 · 语音转写", category: "agent", x: 820, y: 40, summary: "语音转写与时间戳对齐", badge: "并行组 A" },
+  { id: "visual_sampling_agent", label: "A03 小镜 · 画面采样", category: "agent", x: 820, y: 390, summary: "抽取可访问的候选画面", badge: "并行组 A" },
+  { id: "ocr_perception_agent", label: "A04 小字 · 字幕与文字", category: "agent", x: 1100, y: 300, summary: "识别画面中的文字证据", badge: "并行组 B" },
+  { id: "vlm_understanding_agent", label: "A05 小观 · 视觉理解", category: "agent", x: 1100, y: 500, summary: "理解人物、动作、界面与场景含义", badge: "并行组 B" },
   { id: "perception_fusion_gate", label: "跨模态汇合门", category: "gate", x: 1390, y: 210, summary: "等待 ASR、OCR 与 VLM 分支汇合" },
-  { id: "speaker_analysis_agent", label: "说话人分析 Agent", category: "agent", x: 1680, y: 70, summary: "融合音色、对话逻辑与画面称呼" },
-  { id: "timeline_curator_agent", label: "时间轴策展 Agent", category: "agent", x: 1680, y: 350, summary: "生成章节、片段摘要、字幕与关键帧" },
+  { id: "speaker_analysis_agent", label: "A06 小声 · 说话人分析", category: "agent", x: 1680, y: 70, summary: "融合音色、对话逻辑与画面称呼" },
+  { id: "timeline_curator_agent", label: "A07 小编 · 分段与总结", category: "agent", x: 1680, y: 350, summary: "生成章节、片段摘要、字幕与关键帧" },
   { id: "processing_result", label: "视频理解结果", category: "output", x: 1970, y: 210, summary: "发布可问答的视频记忆与时间轴" },
 ];
 
@@ -56,9 +56,9 @@ const PROCESSING_EDGES: EdgeTemplate[] = [
 
 const QA_NODES: NodeTemplate[] = [
   { id: "video_qa_graph", label: "视频问答工作流", category: "workflow", x: 0, y: 210, summary: "接收问题并建立受控 Harness 会话" },
-  { id: "qa_investigator", label: "证据调查 Agent", category: "agent", x: 290, y: 100, summary: "检索视频时间轴、当前帧与上下文" },
-  { id: "web_research_agent", label: "联网研究 Agent", category: "agent", x: 290, y: 360, summary: "勾选联网后通过 MCP 补充外部证据", badge: "按需" },
-  { id: "evidence_verifier", label: "证据验证 Agent", category: "agent", x: 600, y: 210, summary: "检查引用、时间范围与回答覆盖度" },
+  { id: "qa_investigator", label: "A09 小问 · 问题调查", category: "agent", x: 290, y: 100, summary: "检索视频时间轴、当前帧与上下文" },
+  { id: "web_research_agent", label: "A11 小搜 · 联网研究", category: "agent", x: 290, y: 360, summary: "勾选联网后通过 MCP 补充外部证据", badge: "按需" },
+  { id: "evidence_verifier", label: "A10 小证 · 证据核验", category: "agent", x: 600, y: 210, summary: "检查引用、时间范围与回答覆盖度" },
   { id: "qa_investigator:supplement", label: "补充调查回路", category: "agent", x: 900, y: 400, summary: "验证未通过时扩大检索范围", badge: "最多一次" },
   { id: "qa_workflow_result", label: "证据化回答", category: "output", x: 940, y: 120, summary: "发布回答、证据截图与 Trace" },
 ];
@@ -76,7 +76,7 @@ const QA_EDGES: EdgeTemplate[] = [
 const SKILL_NODES: NodeTemplate[] = [
   { id: "skill_builder_graph", label: "Skill 生成工作流", category: "workflow", x: 0, y: 190, summary: "接收样本视频与用户领域目标" },
   { id: "sample_analysis_agent", label: "样本分析 Agent", category: "agent", x: 280, y: 70, summary: "抽取视频格式、主题、叙事目的与章节共性" },
-  { id: "skill_builder_agent", label: "Skill Builder Agent", category: "agent", x: 280, y: 310, summary: "把共性提炼为可复用领域规则" },
+  { id: "skill_builder_agent", label: "A08 小策 · 类别规律提炼", category: "agent", x: 280, y: 310, summary: "把共性提炼为可复用领域规则" },
   { id: "skill_policy_validator", label: "权限与静态检查", category: "gate", x: 580, y: 190, summary: "检查内容完整性、工具白名单与提示注入风险" },
   { id: "human_approval", label: "人工审核发布", category: "human", x: 870, y: 80, summary: "草案必须由用户明确确认后才能启用" },
   { id: "skill_rollback", label: "版本与回滚", category: "gate", x: 870, y: 300, summary: "保留历史发布版本并安全切换运行时" },

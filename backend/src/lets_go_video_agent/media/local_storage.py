@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -34,7 +36,15 @@ class LocalUploadStore:
         if suffix not in ALLOWED_VIDEO_SUFFIXES:
             raise UnsupportedMediaError(f"暂不支持 {suffix or '无扩展名'}；允许 MP4/MOV/MKV/WebM")
 
-        relative_key = Path("uploads") / f"{uuid4().hex}{suffix}"
+        original_stem = Path(upload.filename or "local-video").stem
+        safe_stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", original_stem).strip(" ._")
+        safe_stem = safe_stem[:100] or "local-video"
+        task_time = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        relative_key = (
+            Path("understanding-tasks")
+            / f"{task_time}_LOCAL_{safe_stem}"
+            / f"{uuid4().hex}{suffix}"
+        )
         destination = (self.root / relative_key).resolve()
         if self.root not in destination.parents:
             raise UnsupportedMediaError("非法上传路径")

@@ -1,6 +1,6 @@
 # Agent Harness 设计说明
 
-> 状态：P0 QA 路径已实现；真实模型调用与完整处理图尚未接入。
+> 状态：v1.0 QA、真实模型调用、处理 Trace 与观测界面已接入；v1.1 将增加 Skill 评测门禁、Script Studio 和受控 ReAct 实验。
 
 ## 1. Harness 是什么
 
@@ -40,11 +40,11 @@ flowchart TD
 
 补查最多一次。除此之外，Harness 还用步骤数、工具次数、模型次数、Token、费用、时间和重复调用阈值共同限制执行。
 
-## 4. P0 的 ReAct、Agentic RAG 与 Multi-Agent
+## 4. v1.0 的 ReAct、Agentic RAG 与 Multi-Agent
 
 ### ReAct
 
-当前图保留了 ReAct 的核心思想：先通过工具观察视频证据，再根据观察结果行动，并在核验失败时做一次补充观察。它是**有界 ReAct**，不是让模型无限循环地产生 Thought/Action。
+当前代码不是完整的经典 ReAct Agent。它保留“观察工具证据后决定是否补救”的思想，但动作和最大循环由 LangGraph 预先限定，更准确地说是**有界 Agentic RAG / 反思补救图**。v1.1 只会在复杂开放性问题中实验受控 ReAct 子图，不把固定媒体处理改造成自由循环，也不记录隐藏思维链。
 
 ### Agentic RAG
 
@@ -139,7 +139,7 @@ timeout_seconds
 | `search_timeline` | video_id、query、target、limit | `EvidenceBatch` | InMemoryRetrieval |
 | `inspect_frame` | video_id、timestamp_ms、query | `EvidenceBatch` | InMemoryFrameInspector |
 
-当前 `inspect_frame` 返回目标时刻附近已经存在的视觉/OCR 证据，并不实时调用 FFmpeg、OCR 或 VLM。真实帧检查在 P1 装配媒体适配器后实现。
+上表描述 Harness 内的基础检索工具。应用层当前帧问答还会按目标整数毫秒重新抽取真实图片，并通过已配置的 Qwen3-VL 适配器理解；该调用也必须写入同一 Run/Trace 和预算，不能把播放器附近的缓存帧冒充目标帧。
 
 ## 8. 失败与降级语义
 
@@ -189,7 +189,7 @@ video.question
 
 所有 Span 至少应包含 `trace_id`、`video_id`、目标类型、模型/工具版本、耗时、Token、估算费用和状态；不得包含 API Key 或隐藏思维链。
 
-## 11. 与应用内 Skill 的关系
+## 11. 与应用内 Skill 和 Script Studio 的关系
 
 未来 Skill 可以声明：
 
@@ -206,5 +206,12 @@ Skill 不能：
 - 关闭引用核验、SSRF 或版权确认。
 - 直接访问数据库和对象存储。
 
-Skill Loader 尚未实现。当前 `extensions/skills/.../SKILL.md` 是应用协议草案，不会被运行时自动加载。
+v1.0 已支持已发布 Skill 的视频绑定与运行时加载；v1.1 要进一步记录每个消费节点实际读取了哪些字段，并通过基线/Skill 双路评测证明增益。
 
+Script Studio 使用 Skill 作为类别知识、输出建议和验证约束，但脚本是独立版本化产物，不覆盖 Skill。用户可选择候选数量、修改轮次、Token/费用、联网核验和创意幅度等软预算；工具白名单、系统最大步骤/费用、运行时限、安全和版权规则属于硬上限。
+
+```text
+有效运行策略 = 系统硬上限 ∩ 已发布 Skill 契约 ∩ 用户本次配置
+```
+
+因此“修改 Harness 限制”在产品上表现为选择一个系统允许的运行档位，而不是让用户或生成的 Skill 自行扩大权限。详细脚本生成设计见 [V1.1_SCRIPT_STUDIO.md](../requirements/V1.1_SCRIPT_STUDIO.md)。
