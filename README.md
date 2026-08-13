@@ -19,11 +19,11 @@ LetsGoVideoAgent 是一个面向通用视频内容的多模态、多 Agent 理�
 
 ## 系统截图
 
-以下示例均使用 Zc 故事视频和对应垂类项目。
+以下示例均使用Zc故事视频演示。@B站魔法Zc目录
 
 ### 通用视频理解工作台
 
-视频预览、处理进度、视频 Agent 对话与多轨时间轴保持在同一工作区。示例中音频、OCR 与 Qwen3-VL 视觉理解正在并行处理《【Zc故事】坚脚不移》。
+视频预览、处理进度、视频 Agent 对话与多轨时间轴保持在同一工作区。示例中音频、OCR 与 Qwen3-VL 视觉理解正在并行处理《【Zc故事】坚腚不移》。
 
 <img width="1600" height="1000" alt="zc-video-workbench" src="https://github.com/user-attachments/assets/c8662b2d-d051-4da8-8a25-23de30d06fed" />
 
